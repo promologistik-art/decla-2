@@ -13,7 +13,6 @@ def format_currency(amount):
     return round(amount, 2)
 
 def safe_write(ws, row, col, value):
-    """Безопасная запись в ячейку с учетом объединенных ячеек"""
     try:
         cell = ws.cell(row=row, column=col)
         cell.value = value
@@ -25,45 +24,33 @@ def safe_write(ws, row, col, value):
                 return
         raise
 
+
 def fill_kudir_template(operations, template_path, output_path, inn=IP_INN, fio=IP_FIO, year=2025):
-    """Заполнение шаблона КУДиР"""
     wb = load_workbook(template_path)
-    
-    # Лист 1 (титульный)
     ws1 = wb["Лист1"]
     
-    # Год (ячейка AD13 объединена с AE13)
     safe_write(ws1, 13, column_index_from_string('AD'), year)
     
-    # ФИО (D15:D16)
     fio_parts = fio.split()
     if len(fio_parts) >= 1:
         safe_write(ws1, 15, 4, fio_parts[0])
     if len(fio_parts) >= 2:
         safe_write(ws1, 16, 4, fio_parts[1] + (" " + fio_parts[2] if len(fio_parts) > 2 else ""))
     
-    # ИНН (D20:D21)
     safe_write(ws1, 20, 4, inn)
-    
-    # Объект налогообложения (D27:D28)
     safe_write(ws1, 27, 4, "Доходы")
     
-    # Лист 2 (доходы)
     ws2 = wb["Лист2"]
     
-    # Находим начало таблицы
     start_row = None
     for row in range(10, 30):
         if ws2.cell(row=row, column=1).value == 1:
             start_row = row
             break
-    
     if start_row is None:
         start_row = 14
     
-    # Сортируем операции по дате
     sorted_ops = sorted(operations, key=lambda x: x['date'])
-    
     quarterly_totals = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
     
     for idx, op in enumerate(sorted_ops, 1):
@@ -75,7 +62,6 @@ def fill_kudir_template(operations, template_path, output_path, inn=IP_INN, fio=
         safe_write(ws2, start_row + idx - 1, 3, op['purpose'][:150])
         safe_write(ws2, start_row + idx - 1, 4, format_currency(op['amount']))
     
-    # Заполняем итоги на Лист2
     for row in range(start_row, start_row + len(sorted_ops) + 30):
         cell_val = ws2.cell(row=row, column=1).value
         if cell_val and isinstance(cell_val, str):
@@ -86,9 +72,7 @@ def fill_kudir_template(operations, template_path, output_path, inn=IP_INN, fio=
             elif "Итого за полугодие" in cell_val:
                 safe_write(ws2, row, 4, format_currency(quarterly_totals[1] + quarterly_totals[2]))
     
-    # Лист 3 (продолжение)
     ws3 = wb["Лист3"]
-    
     total_income = sum(quarterly_totals.values())
     
     for row in range(10, 80):
@@ -114,9 +98,6 @@ def fill_kudir_template(operations, template_path, output_path, inn=IP_INN, fio=
 
 
 def fill_declaration_template(operations, ens_data, template_path, output_excel, output_xml, inn=IP_INN, fio=IP_FIO):
-    """Заполнение шаблона декларации"""
-    
-    # Расчет доходов
     quarterly = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
     for op in operations:
         quarter = (op['date'].month - 1) // 3 + 1
@@ -161,31 +142,23 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         cum_deductible = {1: 0, 2: 0, 3: 0, 4: 0}
     
     wb = load_workbook(template_path)
-    
-    # Лист "стр.1" - титульный и расчетный
     ws = wb["стр.1"]
     
-    # ИНН (AG7:AG8)
     safe_write(ws, 7, column_index_from_string('AG'), inn)
-    
-    # Отчетный год (BJ14:BK14)
     safe_write(ws, 14, column_index_from_string('BJ'), 2025)
     
-    # ФИО
     for row in range(30, 50):
         cell_val = ws.cell(row=row, column=1).value
         if cell_val and isinstance(cell_val, str) and "фамилия" in cell_val.lower():
             safe_write(ws, row+1, 1, fio)
             break
     
-    # ОКВЭД
     for row in range(30, 60):
         cell_val = ws.cell(row=row, column=1).value
         if cell_val and isinstance(cell_val, str) and "ОКВЭД" in cell_val:
             safe_write(ws, row, 2, "47.91")
             break
     
-    # Заполнение строк по кодам (колонка C - код, колонка D - значение)
     for row in range(50, 200):
         code_cell = ws.cell(row=row, column=3).value
         if code_cell:
@@ -223,7 +196,6 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     
     wb.save(output_excel)
     
-    # XML
     fio_parts = fio.split()
     last_name = fio_parts[0] if len(fio_parts) > 0 else ""
     first_name = fio_parts[1] if len(fio_parts) > 1 else ""
@@ -279,9 +251,17 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     return tax_payable, total_income
 
 
+# ========== ГЛАВНАЯ ФУНКЦИЯ - 6 АРГУМЕНТОВ ==========
 def generate_report(operations, ens_data, output_dir, user_id, kudir_template, decl_template):
-    """Генерация отчетности с использованием шаблонов"""
-    
+    """
+    Генерация отчетности с использованием шаблонов
+    operations: список операций
+    ens_data: данные из ЕНС
+    output_dir: папка для сохранения
+    user_id: id пользователя
+    kudir_template: путь к шаблону КУДиР
+    decl_template: путь к шаблону декларации
+    """
     kudir_path = os.path.join(output_dir, f"kudir_{user_id}.xlsx")
     total_income = fill_kudir_template(operations, kudir_template, kudir_path)
     

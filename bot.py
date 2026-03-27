@@ -6,8 +6,8 @@ import sys
 import tempfile
 from datetime import datetime
 import pandas as pd
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment
+from openpyxl import load_workbook
+from openpyxl.styles import Font
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -20,8 +20,10 @@ ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]
 # Папки
 DATA_DIR = "data"
 OUTPUT_DIR = "output"
+TEMPLATES_DIR = "templates"
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(TEMPLATES_DIR, exist_ok=True)
 
 # Ключевые слова для определения дохода
 INCOME_KEYWORDS = [
@@ -36,6 +38,13 @@ EXCLUDE_KEYWORDS = [
     "комиссия", "уплата налога", "страховые взносы"
 ]
 
+# Данные ИП (можно будет запросить у пользователя)
+IP_INN = "632312967829"
+IP_FIO = "Леонтьев Артём Владиславович"
+IP_OKTMO = "36701320"
+IP_OKVED = "47.91"
+IP_PHONE = ""
+
 # Хранилище сессий пользователей
 user_sessions = {}
 
@@ -43,7 +52,7 @@ user_sessions = {}
 class UserSession:
     def __init__(self, user_id):
         self.user_id = user_id
-        self.bank_operations = []  # все доходы из банков
+        self.bank_operations = []
         self.ens_data = {
             'insurance_accrued': 0,
             'insurance_paid': 0,
@@ -105,6 +114,13 @@ def is_income(purpose):
     return False
 
 
+def format_currency(amount):
+    """Форматирование суммы для вставки в ячейку"""
+    if amount == int(amount):
+        return int(amount)
+    return round(amount, 2)
+
+
 # ========== ПАРСИНГ ВЫПИСКИ ИЗ БАНКА ==========
 
 def parse_bank_statement(file_path):
@@ -112,7 +128,6 @@ def parse_bank_statement(file_path):
     try:
         df = pd.read_excel(file_path, header=None)
         
-        # Ищем строку с заголовками
         header_row = None
         for idx, row in df.iterrows():
             row_str = ' '.join(str(v) for v in row.values if pd.notna(v)).lower()
@@ -125,7 +140,6 @@ def parse_bank_statement(file_path):
             df.columns = headers
             df = df.iloc[header_row + 1:].reset_index(drop=True)
         
-        # Определяем колонки
         col_date = None
         col_credit = None
         col_debit = None
@@ -153,7 +167,6 @@ def parse_bank_statement(file_path):
             
             purpose = str(row.get(col_purpose, ''))
             
-            # Ищем сумму
             amount = 0
             if col_credit:
                 amount = safe_float(row.get(col_credit, 0))
@@ -163,11 +176,12 @@ def parse_bank_statement(file_path):
                     amount = -amount
             
             if amount > 0 and is_income(purpose):
+                doc_num = row.get('номер', row.get('Номер документа', f"п/п {idx+1}"))
                 operations.append({
                     'date': date,
                     'amount': amount,
                     'purpose': purpose[:200],
-                    'document': f"п/п {idx+1}"
+                    'document': f"{date.strftime('%d.%m.%Y')} {doc_num}"
                 })
         
         return operations
@@ -179,11 +193,9 @@ def parse_bank_statement(file_path):
 # ========== ПАРСИНГ ВЫПИСКИ ЕНС ==========
 
 def parse_ens_statement(file_path):
-    """Парсинг CSV выписки ЕНС (формат ФНС России)"""
+    """Парсинг CSV выписки ЕНС"""
     try:
         df = None
-        
-        # Пробуем разные кодировки и разделители
         encodings = ['utf-8', 'windows-1251', 'cp1251']
         separators = [';', ',', '\t']
         
@@ -208,10 +220,8 @@ def parse_ens_statement(file_path):
             'penalties': 0.0
         }
         
-        # Приводим названия колонок к нижнему регистру
         df.columns = [str(col).strip().lower() for col in df.columns]
         
-        # Ищем нужные колонки
         col_operation = None
         col_amount = None
         col_date = None
@@ -230,57 +240,45 @@ def parse_ens_statement(file_path):
             elif 'кбк' in col:
                 col_kbk = col
         
-        # Если не нашли колонку суммы, ищем любую числовую колонку
         if col_amount is None:
             for col in df.columns:
                 if df[col].dtype in ['float64', 'int64']:
                     col_amount = col
                     break
         
-        # Если не нашли колонку операций, берем первую
         if col_operation is None and len(df.columns) > 0:
             col_operation = df.columns[0]
         
-        print(f"[DEBUG] Колонки: operation={col_operation}, amount={col_amount}, date={col_date}")
-        
         for idx, row in df.iterrows():
             try:
-                # Получаем данные
                 operation = str(row.get(col_operation, '')).lower() if col_operation else ''
                 obligation = str(row.get(col_obligation, '')).lower() if col_obligation else ''
                 kbk = str(row.get(col_kbk, '')) if col_kbk else ''
                 
-                # Получаем сумму
                 amount = 0.0
                 if col_amount:
                     val = row.get(col_amount)
                     if pd.notna(val):
                         amount = safe_float(val)
                 
-                # Получаем дату
                 date_obj = None
                 if col_date:
                     date_str = str(row.get(col_date, ''))
                     if date_str and date_str != 'nan':
                         date_obj = parse_date(date_str)
                 
-                # Начисление страховых взносов
                 if ('начислено' in operation or 'начисление' in operation) and \
                    ('страховые взносы' in obligation or 'фиксированный размер' in operation):
                     result['insurance_accrued'] += abs(amount)
                 
-                # Пени
                 elif 'пеня' in operation or 'пени' in operation:
                     result['penalties'] += abs(amount)
                 
-                # Уплата (ЕНП)
                 elif 'уплата' in operation or 'платеж' in operation:
-                    # Если дата в 2026 году — это уплата взносов за 2025
                     if date_obj and date_obj.year == 2026 and amount > 0:
                         result['insurance_paid'] += amount
                         result['insurance_paid_dates'].append(date_obj)
                 
-                # Проверка по КБК страховых взносов
                 if '18210202000010000160' in kbk and 'уплата' in operation:
                     if date_obj and date_obj.year == 2026:
                         result['insurance_paid'] += amount
@@ -288,7 +286,6 @@ def parse_ens_statement(file_path):
                             result['insurance_paid_dates'].append(date_obj)
                         
             except Exception as e:
-                print(f"[DEBUG] Ошибка строки {idx}: {e}")
                 continue
         
         return result
@@ -297,65 +294,108 @@ def parse_ens_statement(file_path):
         raise Exception(f"Ошибка парсинга ЕНС: {e}")
 
 
-# ========== ГЕНЕРАЦИЯ КУДиР ==========
+# ========== ГЕНЕРАЦИЯ КУДиР (ЗАПОЛНЕНИЕ ВАШЕГО ШАБЛОНА) ==========
 
-def generate_kudir(operations, output_path):
-    """Генерация КУДиР в Excel"""
-    if not operations:
-        return 0
+def fill_kudir_from_template(operations, template_path, output_path, inn=IP_INN, fio=IP_FIO, year=2025):
+    """Заполнение шаблона КУДиР данными"""
     
+    if not os.path.exists(template_path):
+        raise Exception(f"Шаблон КУДиР не найден: {template_path}")
+    
+    wb = load_workbook(template_path)
     sorted_ops = sorted(operations, key=lambda x: x['date'])
+    total_income = sum(op['amount'] for op in sorted_ops)
     
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "КУДиР"
+    # ========== ЛИСТ 1 (ТИТУЛЬНЫЙ) ==========
+    ws_title = wb["Лист1"]
     
-    # Заголовки
-    ws['A1'] = "Книга учета доходов и расходов ИП на УСН"
-    ws['A1'].font = Font(bold=True, size=14)
-    ws.merge_cells('A1:D1')
+    # Заполняем год
+    ws_title["AD13"] = year
     
-    ws['A2'] = "за 2025 год"
-    ws.merge_cells('A2:D2')
+    # Заполняем ФИО
+    fio_parts = fio.split()
+    if len(fio_parts) >= 1:
+        ws_title["D15"] = fio_parts[0]
+    if len(fio_parts) >= 2:
+        ws_title["D16"] = fio_parts[1] + (" " + fio_parts[2] if len(fio_parts) > 2 else "")
     
-    headers = ['№ п/п', 'Дата и номер документа', 'Содержание операции', 'Сумма дохода']
-    for col, header in enumerate(headers, 1):
-        cell = ws.cell(row=4, column=col, value=header)
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal='center')
+    # Заполняем ИНН
+    ws_title["D20"] = inn
     
-    # Данные
-    total = 0
-    for idx, op in enumerate(sorted_ops, 1):
-        ws.cell(row=idx + 4, column=1, value=idx)
-        ws.cell(row=idx + 4, column=2, value=f"{op['date'].strftime('%d.%m.%Y')} {op['document']}")
-        ws.cell(row=idx + 4, column=3, value=op['purpose'])
-        ws.cell(row=idx + 4, column=4, value=f"{op['amount']:,.2f}".replace(",", " "))
-        total += op['amount']
+    # Объект налогообложения
+    ws_title["D27"] = "Доходы"
     
-    # Итог
-    total_row = len(sorted_ops) + 5
-    ws.cell(row=total_row, column=3, value="ИТОГО:")
-    ws.cell(row=total_row, column=3).font = Font(bold=True)
-    ws.cell(row=total_row, column=4, value=f"{total:,.2f}".replace(",", " "))
-    ws.cell(row=total_row, column=4).font = Font(bold=True)
+    # ========== ЛИСТ 2 (ДОХОДЫ I КВАРТАЛ) ==========
+    ws_income1 = wb["Лист2"]
     
-    # Ширина колонок
-    ws.column_dimensions['A'].width = 8
-    ws.column_dimensions['B'].width = 25
-    ws.column_dimensions['C'].width = 50
-    ws.column_dimensions['D'].width = 15
+    # Находим строки для заполнения (после заголовков)
+    # Заголовки в Лист2: строка 9-10
+    start_row = 11
+    
+    quarterly_totals = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+    
+    # Заполняем операции
+    row = start_row
+    for op in sorted_ops:
+        quarter = (op['date'].month - 1) // 3 + 1
+        quarterly_totals[quarter] += op['amount']
+        
+        ws_income1.cell(row=row, column=1, value=row - start_row + 1)  # № п/п
+        ws_income1.cell(row=row, column=2, value=op['document'])        # Дата и номер документа
+        ws_income1.cell(row=row, column=3, value=op['purpose'][:150])   # Содержание операции
+        ws_income1.cell(row=row, column=4, value=format_currency(op['amount']))  # Доходы
+        # колонка 5 (расходы) оставляем пустой
+        row += 1
+    
+    # Итоги за I квартал
+    for r in range(start_row, start_row + 50):
+        val = ws_income1.cell(row=r, column=1).value
+        if val and "Итого за I квартал" in str(val):
+            ws_income1.cell(row=r, column=4, value=format_currency(quarterly_totals[1]))
+        elif val and "Итого за II квартал" in str(val):
+            ws_income1.cell(row=r, column=4, value=format_currency(quarterly_totals[2]))
+        elif val and "Итого за полугодие" in str(val):
+            ws_income1.cell(row=r, column=4, value=format_currency(quarterly_totals[1] + quarterly_totals[2]))
+    
+    # ========== ЛИСТ 3 (ДОХОДЫ III-IV КВАРТАЛ) ==========
+    ws_income2 = wb["Лист3"]
+    
+    # Итоги за III квартал
+    for r in range(11, 60):
+        val = ws_income2.cell(row=r, column=1).value
+        if val and "Итого за III квартал" in str(val):
+            ws_income2.cell(row=r, column=4, value=format_currency(quarterly_totals[3]))
+        elif val and "Итого за 9 месяцев" in str(val):
+            ws_income2.cell(row=r, column=4, value=format_currency(quarterly_totals[1] + quarterly_totals[2] + quarterly_totals[3]))
+        elif val and "Итого за IV квартал" in str(val):
+            ws_income2.cell(row=r, column=4, value=format_currency(quarterly_totals[4]))
+        elif val and "Итого за год" in str(val):
+            ws_income2.cell(row=r, column=4, value=format_currency(total_income))
+    
+    # Справка к разделу I (строки 010, 020, 040)
+    for r in range(50, 80):
+        val = ws_income2.cell(row=r, column=1).value
+        if val and "010" in str(val):
+            ws_income2.cell(row=r, column=4, value=format_currency(total_income))
+        elif val and "020" in str(val):
+            ws_income2.cell(row=r, column=4, value=0)
+        elif val and "040" in str(val):
+            ws_income2.cell(row=r, column=4, value=format_currency(total_income))
     
     wb.save(output_path)
-    return total
+    return total_income
 
 
-# ========== ГЕНЕРАЦИЯ ДЕКЛАРАЦИИ ==========
+# ========== ГЕНЕРАЦИЯ ДЕКЛАРАЦИИ (ЗАПОЛНЕНИЕ ВАШЕГО ШАБЛОНА) ==========
 
-def generate_declaration(operations, ens_data, output_excel, output_xml):
-    """Генерация декларации (Excel и XML)"""
+def fill_declaration_from_template(operations, ens_data, template_path, output_excel, output_xml, 
+                                    inn=IP_INN, fio=IP_FIO, okved=IP_OKVED, phone=IP_PHONE):
+    """Заполнение шаблона декларации данными"""
     
-    # Расчет доходов по кварталам
+    if not os.path.exists(template_path):
+        raise Exception(f"Шаблон декларации не найден: {template_path}")
+    
+    # Расчет доходов
     quarterly = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
     for op in operations:
         quarter = (op['date'].month - 1) // 3 + 1
@@ -365,12 +405,16 @@ def generate_declaration(operations, ens_data, output_excel, output_xml):
     tax_rate = 6
     tax_amount = total_income * tax_rate / 100
     
-    # Проверяем, были ли уплачены взносы в 2025 году
+    # Проверяем уплату взносов в 2025 году
     paid_in_2025 = any(d.year == 2025 for d in ens_data.get('insurance_paid_dates', []))
+    insurance_paid = ens_data.get('insurance_paid', 0)
+    
     if paid_in_2025:
-        tax_payable = max(0, tax_amount - ens_data.get('insurance_paid', 0))
+        tax_payable = max(0, tax_amount - insurance_paid)
+        deductible = insurance_paid
     else:
         tax_payable = tax_amount
+        deductible = 0
     
     # Квартальные суммы нарастающим
     cum_income = {
@@ -380,63 +424,104 @@ def generate_declaration(operations, ens_data, output_excel, output_xml):
         4: total_income
     }
     
-    # ========== Excel ==========
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Декларация УСН"
+    cum_tax = {
+        1: cum_income[1] * tax_rate / 100,
+        2: cum_income[2] * tax_rate / 100,
+        3: cum_income[3] * tax_rate / 100,
+        4: tax_amount
+    }
     
-    ws['A1'] = "Налоговая декларация по УСН за 2025 год"
-    ws['A1'].font = Font(bold=True, size=12)
-    ws.merge_cells('A1:C1')
+    # Вычет по взносам нарастающим
+    if paid_in_2025:
+        cum_deductible = {
+            1: min(cum_tax[1], deductible),
+            2: min(cum_tax[2], deductible),
+            3: min(cum_tax[3], deductible),
+            4: min(cum_tax[4], deductible)
+        }
+    else:
+        cum_deductible = {1: 0, 2: 0, 3: 0, 4: 0}
     
-    # Раздел 2.1.1
-    ws['A3'] = "Раздел 2.1.1. Доходы"
-    ws['A3'].font = Font(bold=True)
+    wb = load_workbook(template_path)
     
-    data = [
-        ("Доход за 1 квартал", "110", cum_income[1]),
-        ("Доход за полугодие", "111", cum_income[2]),
-        ("Доход за 9 месяцев", "112", cum_income[3]),
-        ("Доход за год", "113", cum_income[4]),
-        ("Налоговая ставка (%)", "120", tax_rate),
-        ("Сумма налога за 1 квартал", "130", cum_income[1] * tax_rate / 100),
-        ("Сумма налога за полугодие", "131", cum_income[2] * tax_rate / 100),
-        ("Сумма налога за 9 месяцев", "132", cum_income[3] * tax_rate / 100),
-        ("Сумма налога за год", "133", tax_amount),
-    ]
+    # ========== ЛИСТ 1 (ТИТУЛЬНЫЙ) ==========
+    ws1 = wb["стр.1"]
     
-    for idx, (name, code, val) in enumerate(data, 5):
-        ws.cell(row=idx, column=1, value=name)
-        ws.cell(row=idx, column=2, value=code)
-        ws.cell(row=idx, column=3, value=round(val, 2))
+    # ИНН
+    ws1["AG7"] = inn
     
-    # Раздел 1.1
-    start = 5 + len(data) + 2
-    ws.cell(row=start, column=1, value="Раздел 1.1. Сумма налога к уплате")
-    ws.cell(row=start, column=1).font = Font(bold=True)
+    # ФИО - ищем ячейки
+    for r in range(30, 50):
+        val = ws1.cell(row=r, column=1).value
+        if val and "фамилия" in str(val).lower():
+            ws1.cell(row=r+1, column=1, value=fio)
+            break
     
-    tax_data = [
-        ("Код ОКТМО", "010", "36701320"),
-        ("Аванс к уплате за 1 квартал", "020", 0),
-        ("Аванс к уплате за полугодие", "040", 0),
-        ("Аванс к уплате за 9 месяцев", "070", 0),
-        ("Налог к уплате за год", "100", round(tax_payable, 2)),
-    ]
+    # ОКВЭД
+    for r in range(30, 60):
+        val = ws1.cell(row=r, column=1).value
+        if val and "ОКВЭД" in str(val):
+            ws1.cell(row=r, column=2, value=okved)
+            break
     
-    for idx, (name, code, val) in enumerate(tax_data, start + 2):
-        ws.cell(row=idx, column=1, value=name)
-        ws.cell(row=idx, column=2, value=code)
-        ws.cell(row=idx, column=3, value=val)
+    # Телефон
+    for r in range(30, 60):
+        val = ws1.cell(row=r, column=1).value
+        if val and "телефон" in str(val).lower():
+            ws1.cell(row=r, column=2, value=phone)
+            break
     
-    ws.column_dimensions['A'].width = 35
-    ws.column_dimensions['B'].width = 15
-    ws.column_dimensions['C'].width = 20
+    # Отчетный год
+    ws1["BJ14"] = 2025
+    
+    # ========== ЛИСТ 2 (РАЗДЕЛ 2.1.1) ==========
+    # В декларации нет отдельного листа с расчетом, данные вносятся в строки на стр.1
+    # Найдем строки по кодам
+    for r in range(50, 200):
+        code_cell = ws1.cell(row=r, column=3).value
+        if code_cell:
+            code = str(code_cell).strip()
+            if code == "010":
+                ws1.cell(row=r, column=4, value=cum_income[1])
+            elif code == "011":
+                ws1.cell(row=r, column=4, value=cum_income[2])
+            elif code == "012":
+                ws1.cell(row=r, column=4, value=cum_income[3])
+            elif code == "013":
+                ws1.cell(row=r, column=4, value=cum_income[4])
+            elif code == "020":
+                ws1.cell(row=r, column=4, value=tax_rate)
+            elif code == "030":
+                ws1.cell(row=r, column=4, value=cum_tax[1])
+            elif code == "031":
+                ws1.cell(row=r, column=4, value=cum_tax[2])
+            elif code == "032":
+                ws1.cell(row=r, column=4, value=cum_tax[3])
+            elif code == "033":
+                ws1.cell(row=r, column=4, value=cum_tax[4])
+            elif code == "040":
+                ws1.cell(row=r, column=4, value=cum_deductible[1])
+            elif code == "041":
+                ws1.cell(row=r, column=4, value=cum_deductible[2])
+            elif code == "042":
+                ws1.cell(row=r, column=4, value=cum_deductible[3])
+            elif code == "043":
+                ws1.cell(row=r, column=4, value=cum_deductible[4])
+            elif code == "050":
+                ws1.cell(row=r, column=4, value=IP_OKTMO)
+            elif code == "060":
+                ws1.cell(row=r, column=4, value=tax_payable)
     
     wb.save(output_excel)
     
-    # ========== XML ==========
+    # ========== ГЕНЕРАЦИЯ XML ==========
+    fio_parts = fio.split()
+    last_name = fio_parts[0] if len(fio_parts) > 0 else ""
+    first_name = fio_parts[1] if len(fio_parts) > 1 else ""
+    patronymic = fio_parts[2] if len(fio_parts) > 2 else ""
+    
     xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
-<Файл xmlns="urn:ФНС-СХД-Декл-УСН-2025-1">
+<Файл xmlns="urn:ФНС-СХД-Декл-УСН-2025-1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <Документ>
         <КНД>1152017</КНД>
         <ДатаДок>{datetime.now().strftime('%Y-%m-%d')}</ДатаДок>
@@ -447,18 +532,18 @@ def generate_declaration(operations, ens_data, output_excel, output_xml):
         <ОтчетныйГод>2025</ОтчетныйГод>
     </НалогПериод>
     <Налогоплательщик>
-        <ИНН>632312967829</ИНН>
+        <ИНН>{inn}</ИНН>
         <ИП>
             <ФИО>
-                <Фамилия>Леонтьев</Фамилия>
-                <Имя>Артём</Имя>
-                <Отчество>Владиславович</Отчество>
+                <Фамилия>{last_name}</Фамилия>
+                <Имя>{first_name}</Имя>
+                <Отчество>{patronymic}</Отчество>
             </ФИО>
         </ИП>
     </Налогоплательщик>
     <Показатели>
         <Раздел1_1>
-            <ОКТМО>36701320</ОКТМО>
+            <ОКТМО>{IP_OKTMO}</ОКТМО>
             <СумАван010>0</СумАван010>
             <СумАван020>0</СумАван020>
             <СумАван040>0</СумАван040>
@@ -471,14 +556,14 @@ def generate_declaration(operations, ens_data, output_excel, output_xml):
             <СумДоход112>{int(cum_income[3])}</СумДоход112>
             <СумДоход113>{int(cum_income[4])}</СумДоход113>
             <НалСтавка120>{tax_rate}</НалСтавка120>
-            <СумИсчисНал130>{int(cum_income[1] * tax_rate / 100)}</СумИсчисНал130>
-            <СумИсчисНал131>{int(cum_income[2] * tax_rate / 100)}</СумИсчисНал131>
-            <СумИсчисНал132>{int(cum_income[3] * tax_rate / 100)}</СумИсчисНал132>
-            <СумИсчисНал133>{int(tax_amount)}</СумИсчисНал133>
-            <СумУплНал140>0</СумУплНал140>
-            <СумУплНал141>0</СумУплНал141>
-            <СумУплНал142>0</СумУплНал142>
-            <СумУплНал143>0</СумУплНал143>
+            <СумИсчисНал130>{int(cum_tax[1])}</СумИсчисНал130>
+            <СумИсчисНал131>{int(cum_tax[2])}</СумИсчисНал131>
+            <СумИсчисНал132>{int(cum_tax[3])}</СумИсчисНал132>
+            <СумИсчисНал133>{int(cum_tax[4])}</СумИсчисНал133>
+            <СумУплНал140>{int(cum_deductible[1])}</СумУплНал140>
+            <СумУплНал141>{int(cum_deductible[2])}</СумУплНал141>
+            <СумУплНал142>{int(cum_deductible[3])}</СумУплНал142>
+            <СумУплНал143>{int(cum_deductible[4])}</СумУплНал143>
         </Раздел2_1_1>
     </Показатели>
 </Файл>'''
@@ -495,10 +580,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_sessions[user_id] = UserSession(user_id)
     
+    kudir_template = os.path.join(TEMPLATES_DIR, "KUDIR_template.xlsx")
+    decl_template = os.path.join(TEMPLATES_DIR, "Declaration_template.xlsx")
+    
+    template_status = ""
+    if not os.path.exists(kudir_template):
+        template_status += "\n⚠️ Шаблон КУДиР не найден. Поместите файл KUDIR_template.xlsx в папку templates/"
+    if not os.path.exists(decl_template):
+        template_status += "\n⚠️ Шаблон декларации не найден. Поместите файл Declaration_template.xlsx в папку templates/"
+    
     await update.message.reply_text(
         "🤖 *Бот для подготовки отчетности ИП на УСН*\n\n"
         "Я помогу вам:\n"
-        "📊 Сформировать КУДиР на основе выписок из банков\n"
+        "📊 Сформировать КУДиР по официальной форме ФНС\n"
         "📝 Заполнить декларацию по УСН\n"
         "💰 Рассчитать налог к уплате\n\n"
         "*Как работать:*\n"
@@ -509,7 +603,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Декларацию сдать до *27 апреля 2026*\n"
         "• Налог уплатить до *28 апреля 2026*\n\n"
         "⚠️ Если не сдать декларацию в срок — налоговая может заблокировать счет.\n"
-        "Просрочка уплаты налога счет не блокирует — только пени.",
+        "Просрочка уплаты налога счет не блокирует — только пени.\n\n"
+        f"{template_status}",
         parse_mode="Markdown"
     )
 
@@ -594,21 +689,41 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Сначала загрузите выписку с ЕНС")
         return
     
+    kudir_template = os.path.join(TEMPLATES_DIR, "KUDIR_template.xlsx")
+    decl_template = os.path.join(TEMPLATES_DIR, "Declaration_template.xlsx")
+    
+    if not os.path.exists(kudir_template):
+        await update.message.reply_text(
+            "❌ Шаблон КУДиР не найден!\n\n"
+            "Поместите файл KUDIR_template.xlsx в папку templates/",
+            parse_mode="Markdown"
+        )
+        return
+    
+    if not os.path.exists(decl_template):
+        await update.message.reply_text(
+            "❌ Шаблон декларации не найден!\n\n"
+            "Поместите файл Declaration_template.xlsx в папку templates/",
+            parse_mode="Markdown"
+        )
+        return
+    
     await update.message.reply_text("🔄 Формирую отчетность... Это может занять несколько секунд.")
     
     try:
-        # Генерируем КУДиР
         kudir_path = os.path.join(OUTPUT_DIR, f"kudir_{user_id}.xlsx")
-        total_income = generate_kudir(session.bank_operations, kudir_path)
-        
-        # Генерируем декларацию
-        decl_excel = os.path.join(OUTPUT_DIR, f"declaration_{user_id}.xlsx")
-        decl_xml = os.path.join(OUTPUT_DIR, f"declaration_{user_id}.xml")
-        tax_payable, total_income = generate_declaration(
-            session.bank_operations, session.ens_data, decl_excel, decl_xml
+        total_income = fill_kudir_from_template(
+            session.bank_operations, kudir_template, kudir_path,
+            inn=IP_INN, fio=IP_FIO, year=2025
         )
         
-        # Отправляем результат
+        decl_excel = os.path.join(OUTPUT_DIR, f"declaration_{user_id}.xlsx")
+        decl_xml = os.path.join(OUTPUT_DIR, f"declaration_{user_id}.xml")
+        tax_payable, total_income = fill_declaration_from_template(
+            session.bank_operations, session.ens_data, decl_template, decl_excel, decl_xml,
+            inn=IP_INN, fio=IP_FIO
+        )
+        
         await update.message.reply_text(
             f"✅ *Отчетность готова!*\n\n"
             f"📊 *Доход за 2025:* {total_income:,.2f} ₽\n"
@@ -626,7 +741,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_document(f, filename="КУДиР_2025.xlsx", caption="📘 Книга учета доходов и расходов")
         
         with open(decl_excel, 'rb') as f:
-            await update.message.reply_document(f, filename="Декларация_УСН_2025.xlsx", caption="📝 Декларация (Excel для проверки)")
+            await update.message.reply_document(f, filename="Декларация_УСН_2025.xlsx", caption="📝 Декларация по УСН (Excel для проверки)")
         
         with open(decl_xml, 'rb') as f:
             await update.message.reply_document(f, filename="declaration_usn_2025.xml", caption="📎 XML для загрузки в ЛК ФНС")
@@ -638,8 +753,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "2. Загрузите XML в Личный кабинет ИП на сайте ФНС\n"
             "3. Подпишите электронной подписью и отправьте\n"
             "4. Уплатите налог до 28 апреля 2026\n\n"
-            "💡 *Важно:* взносы, уплаченные в 2026 году, не уменьшают налог за 2025. "
-            "Они будут учтены при расчете налога за 2026 год."
+            "💡 *Важно:* взносы, уплаченные в 2026 году, не уменьшают налог за 2025."
         )
     
     except Exception as e:
@@ -693,6 +807,9 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     
     print("🤖 Бот запущен...")
+    print(f"📁 Папка с шаблонами: {TEMPLATES_DIR}")
+    print(f"📁 Папка с выгрузкой: {OUTPUT_DIR}")
+    
     app.run_polling()
 
 

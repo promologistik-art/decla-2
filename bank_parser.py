@@ -18,9 +18,8 @@ def parse_date(val):
     if isinstance(val, pd.Timestamp):
         return val.to_pydatetime()
     if isinstance(val, str):
-        # Очищаем строку
         val = val.strip()
-        formats = ["%d.%m.%Y", "%Y-%m-%d", "%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M"]
+        formats = ["%d.%m.%Y", "%Y-%m-%d", "%d.%m.%Y %H:%M:%S"]
         for fmt in formats:
             try:
                 return datetime.strptime(val, fmt)
@@ -29,131 +28,118 @@ def parse_date(val):
     return None
 
 def is_income(text):
+    """Доход — всё, кроме переводов себе, комиссий и возвратов"""
     text = str(text).lower()
-    exclude = ["собственных средств", "перевод собственных", "вывод собственных", "комиссия", "уплата налога"]
+    
+    # Не доход
+    exclude = [
+        "собственных средств", "перевод собственных", "вывод собственных",
+        "комиссия", "возврат"
+    ]
     for w in exclude:
         if w in text:
             return False
-    keywords = ["оплата за товар", "оплата по договору", "оплата за услуги", 
-                "интернет решения", "озон", "по реестру", "за товар", 
-                "оплата за ооо", "платеж по ден.треб"]
-    for w in keywords:
-        if w in text:
-            return True
-    return False
+    
+    # Всё остальное — доход
+    return True
 
 def parse_bank_statement(file_path):
-    """Универсальный парсинг выписки"""
+    """Парсинг выписки: ищем колонку 'Кредит' или 'По кредиту'"""
     df = pd.read_excel(file_path, header=None)
     
-    # Ищем строку с данными (где есть дата в формате дд.мм.гггг в любой колонке)
-    data_start = None
+    # 1. Находим строку с заголовками (где есть "кредит")
+    header_row = None
+    credit_col = None
     date_col = None
+    purpose_col = None
     
     for idx, row in df.iterrows():
         for col in range(len(row)):
             val = str(row.iloc[col]) if pd.notna(row.iloc[col]) else ""
-            # Проверяем, похоже ли значение на дату
-            if len(val) >= 8 and '.' in val:
-                parts = val.split('.')
-                if len(parts) == 3 and len(parts[0]) <= 2 and len(parts[1]) <= 2 and len(parts[2]) == 4:
+            val_lower = val.lower()
+            
+            # Ищем колонку с кредитом
+            if "кредит" in val_lower or "по кредиту" in val_lower:
+                header_row = idx
+                credit_col = col
+            
+            # Ищем колонку с датой
+            if "дата" in val_lower:
+                date_col = col
+            
+            # Ищем колонку с назначением
+            if "назначение" in val_lower or "содержание" in val_lower:
+                purpose_col = col
+        
+        if header_row is not None:
+            break
+    
+    if header_row is None:
+        raise Exception("Не найдена колонка 'Кредит'")
+    
+    # 2. Берем данные после заголовка
+    df_data = df.iloc[header_row + 1:].reset_index(drop=True)
+    
+    # 3. Если не нашли колонку с датой, ищем первую колонку с датами
+    if date_col is None:
+        for col in range(len(df_data.columns)):
+            for row in range(min(5, len(df_data))):
+                val = str(df_data.iloc[row, col]) if pd.notna(df_data.iloc[row, col]) else ""
+                if len(val) >= 8 and '.' in val:
                     try:
                         datetime.strptime(val, "%d.%m.%Y")
-                        data_start = idx
                         date_col = col
                         break
                     except:
                         pass
-        if data_start is not None:
-            break
-    
-    if data_start is None:
-        raise Exception("Не удалось найти строки с датами")
-    
-    # Берем данные с найденной строки
-    df_data = df.iloc[data_start:].reset_index(drop=True)
-    
-    # Определяем колонки по первым строкам
-    col_date = date_col
-    col_amount = None
-    col_text = None
-    
-    # Ищем колонку с суммой (кредит/дебет)
-    for col in range(len(df_data.columns)):
-        sample = []
-        for row in range(min(5, len(df_data))):
-            val = df_data.iloc[row, col]
-            if pd.notna(val):
-                sample.append(str(val))
-        
-        if not sample:
-            continue
-        
-        # Пробуем найти числовые значения (суммы)
-        for s in sample:
-            try:
-                num = safe_float(s)
-                if num != 0 and col != col_date:
-                    col_amount = col
-                    break
-            except:
-                pass
-        if col_amount is not None:
-            break
-    
-    # Ищем колонку с текстом (назначение платежа)
-    for col in range(len(df_data.columns)):
-        if col == col_date or col == col_amount:
-            continue
-        sample = []
-        for row in range(min(5, len(df_data))):
-            val = df_data.iloc[row, col]
-            if pd.notna(val):
-                sample.append(str(val))
-        
-        if sample and any(len(s) > 30 for s in sample):
-            col_text = col
-            break
-    
-    # Если не нашли текстовую колонку, берем первую не дату и не сумму
-    if col_text is None:
-        for col in range(len(df_data.columns)):
-            if col != col_date and col != col_amount:
-                col_text = col
+            if date_col is not None:
                 break
+    
+    # 4. Если не нашли колонку с назначением, берем последнюю
+    if purpose_col is None:
+        purpose_col = len(df_data.columns) - 1
     
     operations = []
     
     for idx, row in df_data.iterrows():
         try:
+            # Сумма по кредиту
+            credit_val = row.iloc[credit_col] if credit_col < len(row) else None
+            if pd.isna(credit_val):
+                continue
+            
+            amount = safe_float(credit_val)
+            if amount <= 0:
+                continue
+            
             # Дата
-            date_val = row.iloc[col_date]
+            date_val = row.iloc[date_col] if date_col < len(row) else None
             if pd.isna(date_val):
                 continue
             date = parse_date(date_val)
             if not date:
                 continue
             
-            # Сумма
-            amount = 0.0
-            if col_amount is not None:
-                amount = safe_float(row.iloc[col_amount])
+            # Назначение
+            purpose = ""
+            if purpose_col < len(row):
+                purpose_val = row.iloc[purpose_col]
+                if pd.notna(purpose_val):
+                    purpose = str(purpose_val)
             
-            if amount <= 0:
+            # Исключаем строки с "Итого"
+            if "итого" in purpose.lower():
                 continue
             
-            # Текст
-            text = ""
-            if col_text is not None:
-                text = str(row.iloc[col_text])
-            
-            if is_income(text):
+            # Если доход
+            if is_income(purpose):
                 operations.append({
                     'date': date,
                     'amount': amount,
-                    'purpose': text[:200],
+                    'purpose': purpose[:200],
                     'document': f"{date.strftime('%d.%m.%Y')} оп.{idx+1}"
                 })
+                
         except Exception as e:
             continue
     

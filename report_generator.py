@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, Border, Side
+from openpyxl.styles import Font, Alignment
 
 IP_INN = "632312967829"
 IP_FIO = "Леонтьев Артём Владиславович"
@@ -12,13 +12,19 @@ def format_currency(amount):
         return int(amount)
     return round(amount, 2)
 
-def generate_report(operations, ens_data, output_dir, user_id):
+def generate_report(operations_list, ens_data, output_dir, user_id):
     """Генерация КУДиР и декларации"""
     
-    # Сортируем операции
+    # operations_list может быть списком списков или списком словарей
+    # Преобразуем в плоский список словарей
     all_ops = []
-    for ops in operations:
-        all_ops.extend(ops)
+    for item in operations_list:
+        if isinstance(item, list):
+            all_ops.extend(item)
+        else:
+            all_ops.append(item)
+    
+    # Сортируем по дате
     all_ops.sort(key=lambda x: x['date'])
     
     # Расчет доходов по кварталам

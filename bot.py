@@ -7,7 +7,7 @@ import tempfile
 from datetime import datetime
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Font
+from openpyxl.utils import column_index_from_string
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -29,7 +29,7 @@ os.makedirs(TEMPLATES_DIR, exist_ok=True)
 INCOME_KEYWORDS = [
     "оплата за товар", "оплата по договору", "оплата за услуги",
     "интернет решения", "озон", "по реестру", "оплата по контракту",
-    "платеж по ден.треб", "за товар"
+    "платеж по ден.треб", "за товар", "оплата за ооо", "оплата за ип"
 ]
 
 # Исключаемые операции
@@ -38,14 +38,14 @@ EXCLUDE_KEYWORDS = [
     "комиссия", "уплата налога", "страховые взносы"
 ]
 
-# Данные ИП (можно будет запросить у пользователя)
+# Данные ИП
 IP_INN = "632312967829"
 IP_FIO = "Леонтьев Артём Владиславович"
 IP_OKTMO = "36701320"
 IP_OKVED = "47.91"
 IP_PHONE = ""
 
-# Хранилище сессий пользователей
+# Хранилище сессий
 user_sessions = {}
 
 
@@ -93,8 +93,10 @@ def safe_float(value):
 def parse_date(date_str):
     if isinstance(date_str, datetime):
         return date_str
+    if isinstance(date_str, pd.Timestamp):
+        return date_str.to_pydatetime()
     if isinstance(date_str, str):
-        formats = ["%d.%m.%Y", "%Y-%m-%d", "%d.%m.%Y %H:%M:%S"]
+        formats = ["%d.%m.%Y", "%Y-%m-%d", "%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M"]
         for fmt in formats:
             try:
                 return datetime.strptime(date_str.strip(), fmt)
@@ -115,74 +117,151 @@ def is_income(purpose):
 
 
 def format_currency(amount):
-    """Форматирование суммы для вставки в ячейку"""
     if amount == int(amount):
         return int(amount)
     return round(amount, 2)
 
 
-# ========== ПАРСИНГ ВЫПИСКИ ИЗ БАНКА ==========
+def safe_write(ws, row, col, value):
+    """Безопасная запись в ячейку с учетом объединенных ячеек"""
+    try:
+        cell = ws.cell(row=row, column=col)
+        cell.value = value
+    except AttributeError:
+        # Если ячейка объединена и доступна только для чтения,
+        # ищем левую верхнюю ячейку объединения
+        for merged_range in ws.merged_cells.ranges:
+            if merged_range.min_row <= row <= merged_range.max_row and \
+               merged_range.min_col <= col <= merged_range.max_col:
+                ws.cell(row=merged_range.min_row, column=merged_range.min_col).value = value
+                return
+        raise
+
+
+# ========== УНИВЕРСАЛЬНЫЙ ПАРСИНГ ВЫПИСКИ ==========
 
 def parse_bank_statement(file_path):
-    """Парсинг Excel-выписки, возвращает список доходов"""
+    """Универсальный парсинг Excel-выписки из любого банка"""
     try:
-        df = pd.read_excel(file_path, header=None)
+        df_raw = pd.read_excel(file_path, header=None)
         
+        # Ищем строку с заголовками
         header_row = None
-        for idx, row in df.iterrows():
+        for idx, row in df_raw.iterrows():
             row_str = ' '.join(str(v) for v in row.values if pd.notna(v)).lower()
-            if 'дата' in row_str and ('сумма' in row_str or 'кредит' in row_str):
+            if ('дата' in row_str and 'сумма' in row_str) or \
+               ('дата' in row_str and 'кредит' in row_str) or \
+               ('дата' in row_str and 'дебет' in row_str):
                 header_row = idx
                 break
         
         if header_row is not None:
-            headers = df.iloc[header_row].values
+            headers = df_raw.iloc[header_row].values
+            headers = [str(h).strip() if pd.notna(h) else f"col_{i}" for i, h in enumerate(headers)]
+            df = df_raw.iloc[header_row + 1:].reset_index(drop=True)
             df.columns = headers
-            df = df.iloc[header_row + 1:].reset_index(drop=True)
+        else:
+            df = df_raw.copy()
+            if len(df) > 0:
+                df.columns = [str(c).strip() if pd.notna(c) else f"col_{i}" for i, c in enumerate(df.iloc[0].values)]
+                df = df.iloc[1:].reset_index(drop=True)
         
+        # Определяем колонки
         col_date = None
         col_credit = None
         col_debit = None
         col_purpose = None
+        col_amount = None
         
         for col in df.columns:
-            col_str = str(col).lower()
-            if 'дата' in col_str:
+            col_lower = str(col).lower()
+            if 'дата' in col_lower:
                 col_date = col
-            elif 'кредит' in col_str or 'поступление' in col_str or 'приход' in col_str:
+            elif 'кредит' in col_lower or 'поступление' in col_lower or 'приход' in col_lower:
                 col_credit = col
-            elif 'дебет' in col_str or 'списание' in col_str or 'расход' in col_str:
+            elif 'дебет' in col_lower or 'списание' in col_lower or 'расход' in col_lower:
                 col_debit = col
-            elif 'назначение' in col_str or 'содержание' in col_str or 'назначение платежа' in col_str:
+            elif 'сумма' in col_lower and col_amount is None:
+                col_amount = col
+            elif 'назначение' in col_lower or 'содержание' in col_lower or 'назначение платежа' in col_lower:
                 col_purpose = col
         
+        # Если нет разделения на кредит/дебет, но есть сумма
+        if col_credit is None and col_debit is None and col_amount is not None:
+            col_credit = col_amount
+        
+        # Если не нашли колонку назначения
+        if col_purpose is None:
+            for col in df.columns:
+                if df[col].dtype == 'object' and col not in [col_date, col_credit, col_debit]:
+                    col_purpose = col
+                    break
+        
+        # Если не нашли дату
         if col_date is None:
-            return []
+            for col in df.columns:
+                try:
+                    test_val = df[col].dropna().iloc[0]
+                    if isinstance(test_val, (datetime, pd.Timestamp)) or \
+                       (isinstance(test_val, str) and '.' in test_val and len(test_val) >= 8):
+                        col_date = col
+                        break
+                except:
+                    continue
+        
+        if col_date is None:
+            raise Exception("Не удалось определить колонку с датой")
         
         operations = []
+        
         for idx, row in df.iterrows():
-            date = parse_date(row.get(col_date))
-            if not date:
+            try:
+                date_val = row.get(col_date)
+                if pd.isna(date_val):
+                    continue
+                date = parse_date(date_val)
+                if not date:
+                    continue
+                
+                amount = 0
+                if col_credit:
+                    credit_val = row.get(col_credit)
+                    if pd.notna(credit_val):
+                        amount = safe_float(credit_val)
+                
+                if amount == 0 and col_debit:
+                    debit_val = row.get(col_debit)
+                    if pd.notna(debit_val):
+                        amount = -safe_float(debit_val)
+                
+                if amount == 0:
+                    continue
+                
+                purpose = ""
+                if col_purpose:
+                    purpose_val = row.get(col_purpose)
+                    if pd.notna(purpose_val):
+                        purpose = str(purpose_val)
+                
+                doc_num = ""
+                for col in df.columns:
+                    col_lower = str(col).lower()
+                    if 'номер' in col_lower or '№' in col_lower:
+                        doc_val = row.get(col)
+                        if pd.notna(doc_val):
+                            doc_num = str(doc_val)
+                            break
+                
+                if amount > 0 and is_income(purpose):
+                    operations.append({
+                        'date': date,
+                        'amount': amount,
+                        'purpose': purpose[:200],
+                        'document': f"{date.strftime('%d.%m.%Y')} {doc_num}" if doc_num else f"{date.strftime('%d.%m.%Y')} п/п {idx+1}"
+                    })
+                    
+            except Exception as e:
                 continue
-            
-            purpose = str(row.get(col_purpose, ''))
-            
-            amount = 0
-            if col_credit:
-                amount = safe_float(row.get(col_credit, 0))
-            if amount == 0 and col_debit:
-                amount = safe_float(row.get(col_debit, 0))
-                if amount > 0:
-                    amount = -amount
-            
-            if amount > 0 and is_income(purpose):
-                doc_num = row.get('номер', row.get('Номер документа', f"п/п {idx+1}"))
-                operations.append({
-                    'date': date,
-                    'amount': amount,
-                    'purpose': purpose[:200],
-                    'document': f"{date.strftime('%d.%m.%Y')} {doc_num}"
-                })
         
         return operations
         
@@ -294,10 +373,10 @@ def parse_ens_statement(file_path):
         raise Exception(f"Ошибка парсинга ЕНС: {e}")
 
 
-# ========== ГЕНЕРАЦИЯ КУДиР (ЗАПОЛНЕНИЕ ВАШЕГО ШАБЛОНА) ==========
+# ========== ГЕНЕРАЦИЯ КУДиР (ТОЛЬКО НУЖНЫЕ ЛИСТЫ) ==========
 
 def fill_kudir_from_template(operations, template_path, output_path, inn=IP_INN, fio=IP_FIO, year=2025):
-    """Заполнение шаблона КУДиР данными"""
+    """Заполнение шаблона КУДиР данными (только Лист1, Лист2, Лист3)"""
     
     if not os.path.exists(template_path):
         raise Exception(f"Шаблон КУДиР не найден: {template_path}")
@@ -307,86 +386,94 @@ def fill_kudir_from_template(operations, template_path, output_path, inn=IP_INN,
     total_income = sum(op['amount'] for op in sorted_ops)
     
     # ========== ЛИСТ 1 (ТИТУЛЬНЫЙ) ==========
-    ws_title = wb["Лист1"]
-    
-    # Заполняем год
-    ws_title["AD13"] = year
-    
-    # Заполняем ФИО
-    fio_parts = fio.split()
-    if len(fio_parts) >= 1:
-        ws_title["D15"] = fio_parts[0]
-    if len(fio_parts) >= 2:
-        ws_title["D16"] = fio_parts[1] + (" " + fio_parts[2] if len(fio_parts) > 2 else "")
-    
-    # Заполняем ИНН
-    ws_title["D20"] = inn
-    
-    # Объект налогообложения
-    ws_title["D27"] = "Доходы"
-    
-    # ========== ЛИСТ 2 (ДОХОДЫ I КВАРТАЛ) ==========
-    ws_income1 = wb["Лист2"]
-    
-    # Находим строки для заполнения (после заголовков)
-    # Заголовки в Лист2: строка 9-10
-    start_row = 11
-    
-    quarterly_totals = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
-    
-    # Заполняем операции
-    row = start_row
-    for op in sorted_ops:
-        quarter = (op['date'].month - 1) // 3 + 1
-        quarterly_totals[quarter] += op['amount']
+    if "Лист1" in wb.sheetnames:
+        ws_title = wb["Лист1"]
         
-        ws_income1.cell(row=row, column=1, value=row - start_row + 1)  # № п/п
-        ws_income1.cell(row=row, column=2, value=op['document'])        # Дата и номер документа
-        ws_income1.cell(row=row, column=3, value=op['purpose'][:150])   # Содержание операции
-        ws_income1.cell(row=row, column=4, value=format_currency(op['amount']))  # Доходы
-        # колонка 5 (расходы) оставляем пустой
-        row += 1
+        # AD13:AE13 - год
+        safe_write(ws_title, 13, column_index_from_string('AD'), year)
+        
+        # D15:D16 - ФИО
+        fio_parts = fio.split()
+        if len(fio_parts) >= 1:
+            safe_write(ws_title, 15, 4, fio_parts[0])
+        if len(fio_parts) >= 2:
+            safe_write(ws_title, 16, 4, fio_parts[1] + (" " + fio_parts[2] if len(fio_parts) > 2 else ""))
+        
+        # D20:D21 - ИНН
+        safe_write(ws_title, 20, 4, inn)
+        
+        # D27:D28 - объект налогообложения
+        safe_write(ws_title, 27, 4, "Доходы")
     
-    # Итоги за I квартал
-    for r in range(start_row, start_row + 50):
-        val = ws_income1.cell(row=r, column=1).value
-        if val and "Итого за I квартал" in str(val):
-            ws_income1.cell(row=r, column=4, value=format_currency(quarterly_totals[1]))
-        elif val and "Итого за II квартал" in str(val):
-            ws_income1.cell(row=r, column=4, value=format_currency(quarterly_totals[2]))
-        elif val and "Итого за полугодие" in str(val):
-            ws_income1.cell(row=r, column=4, value=format_currency(quarterly_totals[1] + quarterly_totals[2]))
+    # ========== ЛИСТ 2 (ДОХОДЫ I-II КВАРТАЛ) ==========
+    if "Лист2" in wb.sheetnames:
+        ws_income1 = wb["Лист2"]
+        
+        # Находим начало таблицы (строка с "1" в колонке A)
+        start_row = None
+        for row in range(10, 30):
+            cell_val = ws_income1.cell(row=row, column=1).value
+            if cell_val and str(cell_val).strip() == "1":
+                start_row = row
+                break
+        
+        if start_row is None:
+            start_row = 14
+        
+        quarterly_totals = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+        
+        # Заполняем операции
+        row = start_row
+        for idx, op in enumerate(sorted_ops, 1):
+            quarter = (op['date'].month - 1) // 3 + 1
+            quarterly_totals[quarter] += op['amount']
+            
+            safe_write(ws_income1, row, 1, idx)
+            safe_write(ws_income1, row, 2, op['document'])
+            safe_write(ws_income1, row, 3, op['purpose'][:150])
+            safe_write(ws_income1, row, 4, format_currency(op['amount']))
+            row += 1
+        
+        # Итоги на Лист2 (I и II квартал, полугодие)
+        for r in range(start_row, start_row + 50):
+            cell_val = ws_income1.cell(row=r, column=1).value
+            if cell_val and isinstance(cell_val, str):
+                if "Итого за I квартал" in cell_val:
+                    safe_write(ws_income1, r, 4, format_currency(quarterly_totals[1]))
+                elif "Итого за II квартал" in cell_val:
+                    safe_write(ws_income1, r, 4, format_currency(quarterly_totals[2]))
+                elif "Итого за полугодие" in cell_val:
+                    safe_write(ws_income1, r, 4, format_currency(quarterly_totals[1] + quarterly_totals[2]))
     
-    # ========== ЛИСТ 3 (ДОХОДЫ III-IV КВАРТАЛ) ==========
-    ws_income2 = wb["Лист3"]
+    # ========== ЛИСТ 3 (ДОХОДЫ III-IV КВАРТАЛ + СПРАВКА) ==========
+    if "Лист3" in wb.sheetnames:
+        ws_income2 = wb["Лист3"]
+        
+        for r in range(10, 100):
+            cell_val = ws_income2.cell(row=r, column=1).value
+            if cell_val and isinstance(cell_val, str):
+                if "Итого за III квартал" in cell_val:
+                    safe_write(ws_income2, r, 4, format_currency(quarterly_totals[3]))
+                elif "Итого за 9 месяцев" in cell_val:
+                    safe_write(ws_income2, r, 4, format_currency(quarterly_totals[1] + quarterly_totals[2] + quarterly_totals[3]))
+                elif "Итого за IV квартал" in cell_val:
+                    safe_write(ws_income2, r, 4, format_currency(quarterly_totals[4]))
+                elif "Итого за год" in cell_val:
+                    safe_write(ws_income2, r, 4, format_currency(total_income))
+                elif cell_val.strip() == "010":
+                    safe_write(ws_income2, r, 4, format_currency(total_income))
+                elif cell_val.strip() == "020":
+                    safe_write(ws_income2, r, 4, 0)
+                elif cell_val.strip() == "040":
+                    safe_write(ws_income2, r, 4, format_currency(total_income))
     
-    # Итоги за III квартал
-    for r in range(11, 60):
-        val = ws_income2.cell(row=r, column=1).value
-        if val and "Итого за III квартал" in str(val):
-            ws_income2.cell(row=r, column=4, value=format_currency(quarterly_totals[3]))
-        elif val and "Итого за 9 месяцев" in str(val):
-            ws_income2.cell(row=r, column=4, value=format_currency(quarterly_totals[1] + quarterly_totals[2] + quarterly_totals[3]))
-        elif val and "Итого за IV квартал" in str(val):
-            ws_income2.cell(row=r, column=4, value=format_currency(quarterly_totals[4]))
-        elif val and "Итого за год" in str(val):
-            ws_income2.cell(row=r, column=4, value=format_currency(total_income))
-    
-    # Справка к разделу I (строки 010, 020, 040)
-    for r in range(50, 80):
-        val = ws_income2.cell(row=r, column=1).value
-        if val and "010" in str(val):
-            ws_income2.cell(row=r, column=4, value=format_currency(total_income))
-        elif val and "020" in str(val):
-            ws_income2.cell(row=r, column=4, value=0)
-        elif val and "040" in str(val):
-            ws_income2.cell(row=r, column=4, value=format_currency(total_income))
+    # Листы 4,5,6 не заполняем (для УСН "Доходы" не нужны)
     
     wb.save(output_path)
     return total_income
 
 
-# ========== ГЕНЕРАЦИЯ ДЕКЛАРАЦИИ (ЗАПОЛНЕНИЕ ВАШЕГО ШАБЛОНА) ==========
+# ========== ГЕНЕРАЦИЯ ДЕКЛАРАЦИИ ==========
 
 def fill_declaration_from_template(operations, ens_data, template_path, output_excel, output_xml, 
                                     inn=IP_INN, fio=IP_FIO, okved=IP_OKVED, phone=IP_PHONE):
@@ -405,7 +492,6 @@ def fill_declaration_from_template(operations, ens_data, template_path, output_e
     tax_rate = 6
     tax_amount = total_income * tax_rate / 100
     
-    # Проверяем уплату взносов в 2025 году
     paid_in_2025 = any(d.year == 2025 for d in ens_data.get('insurance_paid_dates', []))
     insurance_paid = ens_data.get('insurance_paid', 0)
     
@@ -416,7 +502,6 @@ def fill_declaration_from_template(operations, ens_data, template_path, output_e
         tax_payable = tax_amount
         deductible = 0
     
-    # Квартальные суммы нарастающим
     cum_income = {
         1: quarterly[1],
         2: quarterly[1] + quarterly[2],
@@ -431,7 +516,6 @@ def fill_declaration_from_template(operations, ens_data, template_path, output_e
         4: tax_amount
     }
     
-    # Вычет по взносам нарастающим
     if paid_in_2025:
         cum_deductible = {
             1: min(cum_tax[1], deductible),
@@ -443,78 +527,75 @@ def fill_declaration_from_template(operations, ens_data, template_path, output_e
         cum_deductible = {1: 0, 2: 0, 3: 0, 4: 0}
     
     wb = load_workbook(template_path)
-    
-    # ========== ЛИСТ 1 (ТИТУЛЬНЫЙ) ==========
     ws1 = wb["стр.1"]
     
-    # ИНН
-    ws1["AG7"] = inn
+    # AG7:AG8 - ИНН
+    safe_write(ws1, 7, column_index_from_string('AG'), inn)
     
-    # ФИО - ищем ячейки
-    for r in range(30, 50):
-        val = ws1.cell(row=r, column=1).value
-        if val and "фамилия" in str(val).lower():
-            ws1.cell(row=r+1, column=1, value=fio)
-            break
+    # BJ14:BK14 - отчетный год
+    safe_write(ws1, 14, column_index_from_string('BJ'), 2025)
+    
+    # ФИО (ищем по тексту)
+    for r in range(30, 60):
+        cell_val = ws1.cell(row=r, column=1).value
+        if cell_val and isinstance(cell_val, str):
+            if "фамилия" in cell_val.lower():
+                safe_write(ws1, r+1, 1, fio)
+                break
     
     # ОКВЭД
     for r in range(30, 60):
-        val = ws1.cell(row=r, column=1).value
-        if val and "ОКВЭД" in str(val):
-            ws1.cell(row=r, column=2, value=okved)
+        cell_val = ws1.cell(row=r, column=1).value
+        if cell_val and isinstance(cell_val, str) and "ОКВЭД" in cell_val:
+            safe_write(ws1, r, 2, okved)
             break
     
     # Телефон
     for r in range(30, 60):
-        val = ws1.cell(row=r, column=1).value
-        if val and "телефон" in str(val).lower():
-            ws1.cell(row=r, column=2, value=phone)
+        cell_val = ws1.cell(row=r, column=1).value
+        if cell_val and isinstance(cell_val, str) and "телефон" in cell_val.lower():
+            safe_write(ws1, r, 2, phone)
             break
     
-    # Отчетный год
-    ws1["BJ14"] = 2025
-    
-    # ========== ЛИСТ 2 (РАЗДЕЛ 2.1.1) ==========
-    # В декларации нет отдельного листа с расчетом, данные вносятся в строки на стр.1
-    # Найдем строки по кодам
+    # Заполнение строк по кодам (колонка C - код, колонка D - значение)
     for r in range(50, 200):
         code_cell = ws1.cell(row=r, column=3).value
         if code_cell:
             code = str(code_cell).strip()
             if code == "010":
-                ws1.cell(row=r, column=4, value=cum_income[1])
+                safe_write(ws1, r, 4, format_currency(cum_income[1]))
             elif code == "011":
-                ws1.cell(row=r, column=4, value=cum_income[2])
+                safe_write(ws1, r, 4, format_currency(cum_income[2]))
             elif code == "012":
-                ws1.cell(row=r, column=4, value=cum_income[3])
+                safe_write(ws1, r, 4, format_currency(cum_income[3]))
             elif code == "013":
-                ws1.cell(row=r, column=4, value=cum_income[4])
+                safe_write(ws1, r, 4, format_currency(cum_income[4]))
             elif code == "020":
-                ws1.cell(row=r, column=4, value=tax_rate)
+                safe_write(ws1, r, 4, tax_rate)
             elif code == "030":
-                ws1.cell(row=r, column=4, value=cum_tax[1])
+                safe_write(ws1, r, 4, format_currency(cum_tax[1]))
             elif code == "031":
-                ws1.cell(row=r, column=4, value=cum_tax[2])
+                safe_write(ws1, r, 4, format_currency(cum_tax[2]))
             elif code == "032":
-                ws1.cell(row=r, column=4, value=cum_tax[3])
+                safe_write(ws1, r, 4, format_currency(cum_tax[3]))
             elif code == "033":
-                ws1.cell(row=r, column=4, value=cum_tax[4])
+                safe_write(ws1, r, 4, format_currency(cum_tax[4]))
             elif code == "040":
-                ws1.cell(row=r, column=4, value=cum_deductible[1])
+                safe_write(ws1, r, 4, format_currency(cum_deductible[1]))
             elif code == "041":
-                ws1.cell(row=r, column=4, value=cum_deductible[2])
+                safe_write(ws1, r, 4, format_currency(cum_deductible[2]))
             elif code == "042":
-                ws1.cell(row=r, column=4, value=cum_deductible[3])
+                safe_write(ws1, r, 4, format_currency(cum_deductible[3]))
             elif code == "043":
-                ws1.cell(row=r, column=4, value=cum_deductible[4])
+                safe_write(ws1, r, 4, format_currency(cum_deductible[4]))
             elif code == "050":
-                ws1.cell(row=r, column=4, value=IP_OKTMO)
+                safe_write(ws1, r, 4, IP_OKTMO)
             elif code == "060":
-                ws1.cell(row=r, column=4, value=tax_payable)
+                safe_write(ws1, r, 4, format_currency(tax_payable))
     
     wb.save(output_excel)
     
-    # ========== ГЕНЕРАЦИЯ XML ==========
+    # ========== XML ==========
     fio_parts = fio.split()
     last_name = fio_parts[0] if len(fio_parts) > 0 else ""
     first_name = fio_parts[1] if len(fio_parts) > 1 else ""
@@ -693,19 +774,11 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     decl_template = os.path.join(TEMPLATES_DIR, "Declaration_template.xlsx")
     
     if not os.path.exists(kudir_template):
-        await update.message.reply_text(
-            "❌ Шаблон КУДиР не найден!\n\n"
-            "Поместите файл KUDIR_template.xlsx в папку templates/",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("❌ Шаблон КУДиР не найден! Поместите файл KUDIR_template.xlsx в папку templates/")
         return
     
     if not os.path.exists(decl_template):
-        await update.message.reply_text(
-            "❌ Шаблон декларации не найден!\n\n"
-            "Поместите файл Declaration_template.xlsx в папку templates/",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("❌ Шаблон декларации не найден! Поместите файл Declaration_template.xlsx в папку templates/")
         return
     
     await update.message.reply_text("🔄 Формирую отчетность... Это может занять несколько секунд.")

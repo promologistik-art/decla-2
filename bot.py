@@ -179,20 +179,27 @@ def parse_bank_statement(file_path):
 # ========== ПАРСИНГ ВЫПИСКИ ЕНС ==========
 
 def parse_ens_statement(file_path):
-    """Парсинг CSV выписки ЕНС"""
+    """Парсинг CSV выписки ЕНС (формат ФНС России)"""
     try:
-        # Пробуем разные разделители
         df = None
-        for sep in [';', ',', '\t']:
-            try:
-                df = pd.read_csv(file_path, sep=sep, encoding='utf-8')
-                if len(df.columns) > 1:
-                    break
-            except:
-                continue
         
-        if df is None:
-            raise Exception("Не удалось прочитать файл")
+        # Пробуем разные кодировки и разделители
+        encodings = ['utf-8', 'windows-1251', 'cp1251']
+        separators = [';', ',', '\t']
+        
+        for enc in encodings:
+            for sep in separators:
+                try:
+                    df = pd.read_csv(file_path, sep=sep, encoding=enc, on_bad_lines='skip')
+                    if len(df.columns) > 1:
+                        break
+                except:
+                    continue
+            if df is not None and len(df.columns) > 1:
+                break
+        
+        if df is None or len(df.columns) <= 1:
+            raise Exception("Не удалось определить формат файла")
         
         result = {
             'insurance_accrued': 0.0,
@@ -201,24 +208,88 @@ def parse_ens_statement(file_path):
             'penalties': 0.0
         }
         
-        for _, row in df.iterrows():
-            operation = str(row.get('Наименование операции', ''))
-            amount = safe_float(row.get('Сумма операции', 0))
-            date_str = str(row.get('Дата записи', ''))
-            
+        # Приводим названия колонок к нижнему регистру
+        df.columns = [str(col).strip().lower() for col in df.columns]
+        
+        # Ищем нужные колонки
+        col_operation = None
+        col_amount = None
+        col_date = None
+        col_obligation = None
+        col_kbk = None
+        
+        for col in df.columns:
+            if 'наименование операции' in col or 'операция' in col:
+                col_operation = col
+            elif 'сумма' in col and 'операции' in col:
+                col_amount = col
+            elif 'дата' in col:
+                col_date = col
+            elif 'наименование обязательства' in col or 'обязательство' in col:
+                col_obligation = col
+            elif 'кбк' in col:
+                col_kbk = col
+        
+        # Если не нашли колонку суммы, ищем любую числовую колонку
+        if col_amount is None:
+            for col in df.columns:
+                if df[col].dtype in ['float64', 'int64']:
+                    col_amount = col
+                    break
+        
+        # Если не нашли колонку операций, берем первую
+        if col_operation is None and len(df.columns) > 0:
+            col_operation = df.columns[0]
+        
+        print(f"[DEBUG] Колонки: operation={col_operation}, amount={col_amount}, date={col_date}")
+        
+        for idx, row in df.iterrows():
             try:
-                date_obj = datetime.strptime(date_str.split()[0], '%Y-%m-%d')
-            except:
+                # Получаем данные
+                operation = str(row.get(col_operation, '')).lower() if col_operation else ''
+                obligation = str(row.get(col_obligation, '')).lower() if col_obligation else ''
+                kbk = str(row.get(col_kbk, '')) if col_kbk else ''
+                
+                # Получаем сумму
+                amount = 0.0
+                if col_amount:
+                    val = row.get(col_amount)
+                    if pd.notna(val):
+                        amount = safe_float(val)
+                
+                # Получаем дату
                 date_obj = None
-            
-            if 'Начислено' in operation and 'Страховые взносы' in str(row.get('Наименование обязательства', '')):
-                result['insurance_accrued'] += abs(amount)
-            elif 'пеня' in operation.lower():
-                result['penalties'] += abs(amount)
-            elif 'Уплата' in operation:
-                if date_obj and date_obj.year == 2026:
-                    result['insurance_paid'] += amount
-                    result['insurance_paid_dates'].append(date_obj)
+                if col_date:
+                    date_str = str(row.get(col_date, ''))
+                    if date_str and date_str != 'nan':
+                        date_obj = parse_date(date_str)
+                
+                # Начисление страховых взносов
+                if ('начислено' in operation or 'начисление' in operation) and \
+                   ('страховые взносы' in obligation or 'фиксированный размер' in operation):
+                    result['insurance_accrued'] += abs(amount)
+                
+                # Пени
+                elif 'пеня' in operation or 'пени' in operation:
+                    result['penalties'] += abs(amount)
+                
+                # Уплата (ЕНП)
+                elif 'уплата' in operation or 'платеж' in operation:
+                    # Если дата в 2026 году — это уплата взносов за 2025
+                    if date_obj and date_obj.year == 2026 and amount > 0:
+                        result['insurance_paid'] += amount
+                        result['insurance_paid_dates'].append(date_obj)
+                
+                # Проверка по КБК страховых взносов
+                if '18210202000010000160' in kbk and 'уплата' in operation:
+                    if date_obj and date_obj.year == 2026:
+                        result['insurance_paid'] += amount
+                        if date_obj not in result['insurance_paid_dates']:
+                            result['insurance_paid_dates'].append(date_obj)
+                        
+            except Exception as e:
+                print(f"[DEBUG] Ошибка строки {idx}: {e}")
+                continue
         
         return result
         
@@ -314,8 +385,8 @@ def generate_declaration(operations, ens_data, output_excel, output_xml):
     ws = wb.active
     ws.title = "Декларация УСН"
     
-    ws['A1'] = "Декларация по УСН за 2025 год"
-    ws['A1'].font = Font(bold=True, size=14)
+    ws['A1'] = "Налоговая декларация по УСН за 2025 год"
+    ws['A1'].font = Font(bold=True, size=12)
     ws.merge_cells('A1:C1')
     
     # Раздел 2.1.1
@@ -327,11 +398,11 @@ def generate_declaration(operations, ens_data, output_excel, output_xml):
         ("Доход за полугодие", "111", cum_income[2]),
         ("Доход за 9 месяцев", "112", cum_income[3]),
         ("Доход за год", "113", cum_income[4]),
-        ("Налоговая ставка", "120", tax_rate),
-        ("Налог за 1 квартал", "130", cum_income[1] * tax_rate / 100),
-        ("Налог за полугодие", "131", cum_income[2] * tax_rate / 100),
-        ("Налог за 9 месяцев", "132", cum_income[3] * tax_rate / 100),
-        ("Налог за год", "133", tax_amount),
+        ("Налоговая ставка (%)", "120", tax_rate),
+        ("Сумма налога за 1 квартал", "130", cum_income[1] * tax_rate / 100),
+        ("Сумма налога за полугодие", "131", cum_income[2] * tax_rate / 100),
+        ("Сумма налога за 9 месяцев", "132", cum_income[3] * tax_rate / 100),
+        ("Сумма налога за год", "133", tax_amount),
     ]
     
     for idx, (name, code, val) in enumerate(data, 5):
@@ -341,14 +412,14 @@ def generate_declaration(operations, ens_data, output_excel, output_xml):
     
     # Раздел 1.1
     start = 5 + len(data) + 2
-    ws.cell(row=start, column=1, value="Раздел 1.1. Налог к уплате")
+    ws.cell(row=start, column=1, value="Раздел 1.1. Сумма налога к уплате")
     ws.cell(row=start, column=1).font = Font(bold=True)
     
     tax_data = [
-        ("ОКТМО", "010", "36701320"),
-        ("Аванс за 1 кв", "020", 0),
-        ("Аванс за полугодие", "040", 0),
-        ("Аванс за 9 мес", "070", 0),
+        ("Код ОКТМО", "010", "36701320"),
+        ("Аванс к уплате за 1 квартал", "020", 0),
+        ("Аванс к уплате за полугодие", "040", 0),
+        ("Аванс к уплате за 9 месяцев", "070", 0),
         ("Налог к уплате за год", "100", round(tax_payable, 2)),
     ]
     
@@ -519,11 +590,11 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Сначала загрузите выписки с расчетных счетов")
         return
     
-    if not session.ens_data.get('insurance_accrued'):
+    if not session.ens_data.get('insurance_accrued') and not session.ens_data.get('insurance_paid'):
         await update.message.reply_text("⚠️ Сначала загрузите выписку с ЕНС")
         return
     
-    await update.message.reply_text("🔄 Формирую отчетность...")
+    await update.message.reply_text("🔄 Формирую отчетность... Это может занять несколько секунд.")
     
     try:
         # Генерируем КУДиР
@@ -566,7 +637,9 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "1. Проверьте декларацию в Excel\n"
             "2. Загрузите XML в Личный кабинет ИП на сайте ФНС\n"
             "3. Подпишите электронной подписью и отправьте\n"
-            "4. Уплатите налог до 28 апреля 2026"
+            "4. Уплатите налог до 28 апреля 2026\n\n"
+            "💡 *Важно:* взносы, уплаченные в 2026 году, не уменьшают налог за 2025. "
+            "Они будут учтены при расчете налога за 2026 год."
         )
     
     except Exception as e:
@@ -588,22 +661,29 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 *Помощь*\n\n"
         "*Команды:*\n"
-        "/start — начать\n"
+        "/start — начать работу\n"
         "/report — сформировать отчетность\n"
-        "/reset — сбросить данные\n"
-        "/help — справка\n\n"
+        "/reset — сбросить все данные\n"
+        "/help — эта справка\n\n"
         "*Файлы:*\n"
         "• Сначала загрузите Excel-выписки из банков\n"
         "• Затем загрузите CSV-выписку с ЕНС\n"
         "• Введите /report\n\n"
-        "*Сроки:*\n"
-        "• Декларация: до 27.04.2026\n"
-        "• Уплата налога: до 28.04.2026",
+        "*Сроки за 2025 год:*\n"
+        "• Декларация: до 27 апреля 2026\n"
+        "• Уплата налога: до 28 апреля 2026\n\n"
+        "*Важно:*\n"
+        "• За несдачу декларации — блокировка счета\n"
+        "• За просрочку уплаты налога — только пени",
         parse_mode="Markdown"
     )
 
 
 def main():
+    if not BOT_TOKEN:
+        print("❌ Ошибка: BOT_TOKEN не задан в .env файле")
+        sys.exit(1)
+    
     app = Application.builder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))

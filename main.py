@@ -35,12 +35,14 @@ class UserSession:
             'insurance_paid_dates': [],
             'penalties': 0
         }
+        self.ens_loaded = False  # флаг, что ЕНС загружена
 
     def add_bank_operations(self, operations):
         self.bank_operations.extend(operations)
 
     def set_ens_data(self, data):
         self.ens_data = data
+        self.ens_loaded = True  # помечаем, что ЕНС загружена
 
     def reset(self):
         self.bank_operations = []
@@ -50,6 +52,7 @@ class UserSession:
             'insurance_paid_dates': [],
             'penalties': 0
         }
+        self.ens_loaded = False
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -93,7 +96,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 session.add_bank_operations(operations)
                 total = sum(op['amount'] for op in operations)
                 await update.message.reply_text(
-                    f"✅ Найдено {len(operations)} операций\n💰 Сумма: {total:,.2f} ₽"
+                    f"✅ Найдено {len(operations)} операций\n💰 Сумма: {total:,.2f} ₽\n\n"
+                    f"📌 Всего загружено операций: {len(session.bank_operations)}\n"
+                    f"📌 Всего доходов: {sum(op['amount'] for op in session.bank_operations):,.2f} ₽"
                 )
             else:
                 await update.message.reply_text("⚠️ Доходов не найдено")
@@ -103,11 +108,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ens_data = parse_ens_statement(tmp_path)
             session.set_ens_data(ens_data)
             
-            paid = any(d.year == 2025 for d in ens_data['insurance_paid_dates'])
+            paid_in_2025 = any(d.year == 2025 for d in ens_data['insurance_paid_dates'])
+            
             await update.message.reply_text(
-                f"✅ Выписка ЕНС обработана\n"
-                f"• Взносы уплачены в 2025: {'Да' if paid else 'Нет'}\n"
-                f"• Сумма взносов: {ens_data['insurance_paid']:,.2f} ₽"
+                f"✅ Выписка ЕНС обработана!\n\n"
+                f"📌 Страховые взносы:\n"
+                f"• Начислено: {ens_data['insurance_accrued']:,.2f} ₽\n"
+                f"• Уплачено: {ens_data['insurance_paid']:,.2f} ₽\n"
+                f"• Уплачено в 2025: {'Да' if paid_in_2025 else 'Нет'}\n"
+                f"• Пени: {ens_data['penalties']:,.2f} ₽\n\n"
+                f"✅ Теперь введите /report для формирования отчетности"
             )
         
         else:
@@ -131,36 +141,42 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session = user_sessions[user_id]
     
     if not session.bank_operations:
-        await update.message.reply_text("⚠️ Загрузите выписки из банков")
+        await update.message.reply_text("⚠️ Сначала загрузите выписки из банков")
         return
     
-    if not session.ens_data.get('insurance_accrued') and not session.ens_data.get('insurance_paid'):
-        await update.message.reply_text("⚠️ Загрузите выписку ЕНС")
+    if not session.ens_loaded:
+        await update.message.reply_text("⚠️ Сначала загрузите выписку ЕНС (CSV файл)")
         return
     
     await update.message.reply_text("🔄 Формирую отчетность...")
     
     try:
+        # Собираем все операции
+        all_ops = []
+        for ops in session.bank_operations:
+            all_ops.extend(ops)
+        all_ops.sort(key=lambda x: x['date'])
+        
         kudir_path, decl_excel, decl_xml, total_income, tax_payable = generate_report(
-            session.bank_operations, session.ens_data, OUTPUT_DIR, user_id
+            all_ops, session.ens_data, OUTPUT_DIR, user_id
         )
         
         await update.message.reply_text(
-            f"✅ *Отчетность готова*\n\n"
-            f"📊 Доход: {total_income:,.2f} ₽\n"
+            f"✅ *Отчетность готова!*\n\n"
+            f"📊 Доход за 2025: {total_income:,.2f} ₽\n"
             f"💰 Налог к уплате: {tax_payable:,.2f} ₽\n\n"
             f"📌 Сдать декларацию до *27 апреля 2026*",
             parse_mode="Markdown"
         )
         
         with open(kudir_path, 'rb') as f:
-            await update.message.reply_document(f, filename="КУДиР_2025.xlsx")
+            await update.message.reply_document(f, filename="КУДиР_2025.xlsx", caption="📘 Книга учета доходов и расходов")
         
         with open(decl_excel, 'rb') as f:
-            await update.message.reply_document(f, filename="Декларация_УСН_2025.xlsx")
+            await update.message.reply_document(f, filename="Декларация_УСН_2025.xlsx", caption="📝 Декларация по УСН (Excel)")
         
         with open(decl_xml, 'rb') as f:
-            await update.message.reply_document(f, filename="declaration_usn_2025.xml")
+            await update.message.reply_document(f, filename="declaration_usn_2025.xml", caption="📎 XML для загрузки в ЛК ФНС")
     
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
@@ -170,23 +186,33 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in user_sessions:
         user_sessions[user_id].reset()
-        await update.message.reply_text("🔄 Данные сброшены")
+        await update.message.reply_text("🔄 Данные сброшены. Начните с /start")
+    else:
+        await update.message.reply_text("Нет активной сессии. Используйте /start")
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📌 *Команды:*\n"
-        "/start — начать\n"
+        "🤖 *Помощь*\n\n"
+        "*Команды:*\n"
+        "/start — начать работу\n"
         "/report — сформировать отчетность\n"
-        "/reset — сбросить данные\n"
-        "/help — справка",
+        "/reset — сбросить все данные\n"
+        "/help — эта справка\n\n"
+        "*Файлы:*\n"
+        "• Сначала загрузите Excel-выписки из банков\n"
+        "• Затем загрузите CSV-выписку с ЕНС\n"
+        "• Введите /report\n\n"
+        "*Сроки за 2025 год:*\n"
+        "• Декларация: до 27 апреля 2026\n"
+        "• Уплата налога: до 28 апреля 2026",
         parse_mode="Markdown"
     )
 
 
 def main():
     if not BOT_TOKEN:
-        print("❌ BOT_TOKEN не задан")
+        print("❌ BOT_TOKEN не задан в .env")
         sys.exit(1)
     
     app = Application.builder().token(BOT_TOKEN).build()

@@ -8,31 +8,45 @@ IP_FIO = "Леонтьев Артём Владиславович"
 IP_OKTMO = "36701320"
 
 def format_currency(amount):
-    if amount == int(amount):
-        return int(amount)
-    return round(amount, 2)
+    """Безопасное форматирование числа"""
+    try:
+        # Если пришла строка, преобразуем в число
+        if isinstance(amount, str):
+            amount = float(amount.replace(" ", "").replace(",", "."))
+        # Округляем до 2 знаков, если не целое
+        if amount == int(amount):
+            return int(amount)
+        return round(amount, 2)
+    except:
+        return 0
 
 def generate_report(operations_data, ens_data, output_dir, user_id):
     """
     Генерация КУДиР и декларации
-    operations_data: список операций, каждая операция - словарь с ключами date, amount, purpose
+    operations_data: список словарей с ключами date, amount, purpose
     """
     
     # Нормализуем входные данные - преобразуем в список словарей
     all_ops = []
     
-    # Проверяем тип operations_data
     if isinstance(operations_data, list):
         for item in operations_data:
             if isinstance(item, dict):
-                # Это уже словарь
+                # Проверяем наличие всех нужных ключей
                 if 'date' in item and 'amount' in item:
-                    all_ops.append(item)
+                    all_ops.append({
+                        'date': item['date'],
+                        'amount': float(item['amount']),
+                        'purpose': str(item.get('purpose', ''))
+                    })
             elif isinstance(item, list):
-                # Это список словарей
                 for subitem in item:
                     if isinstance(subitem, dict) and 'date' in subitem and 'amount' in subitem:
-                        all_ops.append(subitem)
+                        all_ops.append({
+                            'date': subitem['date'],
+                            'amount': float(subitem['amount']),
+                            'purpose': str(subitem.get('purpose', ''))
+                        })
     
     if not all_ops:
         raise Exception("Нет данных для формирования отчетности")
@@ -46,7 +60,7 @@ def generate_report(operations_data, ens_data, output_dir, user_id):
         quarter = (op['date'].month - 1) // 3 + 1
         quarterly[quarter] += op['amount']
     
-    total_income = sum(quarterly.values())
+    total_income = quarterly[1] + quarterly[2] + quarterly[3] + quarterly[4]
     tax_rate = 6
     tax_amount = total_income * tax_rate / 100
     
@@ -59,6 +73,8 @@ def generate_report(operations_data, ens_data, output_dir, user_id):
             break
     
     insurance_paid = ens_data.get('insurance_paid', 0)
+    if isinstance(insurance_paid, str):
+        insurance_paid = float(insurance_paid.replace(" ", "").replace(",", "."))
     
     if paid_in_2025:
         tax_payable = max(0, tax_amount - insurance_paid)
@@ -101,14 +117,17 @@ def generate_report(operations_data, ens_data, output_dir, user_id):
     for idx, op in enumerate(all_ops, 1):
         ws.cell(row=7 + idx, column=1, value=idx)
         ws.cell(row=7 + idx, column=2, value=op['date'].strftime('%d.%m.%Y'))
-        ws.cell(row=7 + idx, column=3, value=op['purpose'][:150] if len(op['purpose']) > 150 else op['purpose'])
-        ws.cell(row=7 + idx, column=4, value=op['amount'])
+        purpose = op['purpose'][:150] if len(op['purpose']) > 150 else op['purpose']
+        ws.cell(row=7 + idx, column=3, value=purpose)
+        amount_val = format_currency(op['amount'])
+        ws.cell(row=7 + idx, column=4, value=amount_val)
         total += op['amount']
     
     # Итог
-    ws.cell(row=7 + len(all_ops) + 1, column=3, value="ИТОГО:")
-    ws.cell(row=7 + len(all_ops) + 1, column=3).font = Font(bold=True)
-    ws.cell(row=7 + len(all_ops) + 1, column=4, value=total)
+    total_row = 7 + len(all_ops) + 1
+    ws.cell(row=total_row, column=3, value="ИТОГО:")
+    ws.cell(row=total_row, column=3).font = Font(bold=True)
+    ws.cell(row=total_row, column=4, value=format_currency(total))
     
     for col in range(1, 5):
         ws.column_dimensions[chr(64 + col)].width = 20
@@ -132,22 +151,22 @@ def generate_report(operations_data, ens_data, output_dir, user_id):
     ws['A6'].font = Font(bold=True)
     
     data_211 = [
-        ("Доход за 1 квартал", "110", cum_income_1),
-        ("Доход за полугодие", "111", cum_income_2),
-        ("Доход за 9 месяцев", "112", cum_income_3),
-        ("Доход за год", "113", cum_income_4),
+        ("Доход за 1 квартал", "110", format_currency(cum_income_1)),
+        ("Доход за полугодие", "111", format_currency(cum_income_2)),
+        ("Доход за 9 месяцев", "112", format_currency(cum_income_3)),
+        ("Доход за год", "113", format_currency(cum_income_4)),
         ("Налоговая ставка (%)", "120", tax_rate),
-        ("Сумма налога за 1 квартал", "130", cum_tax_1),
-        ("Сумма налога за полугодие", "131", cum_tax_2),
-        ("Сумма налога за 9 месяцев", "132", cum_tax_3),
-        ("Сумма налога за год", "133", cum_tax_4),
+        ("Сумма налога за 1 квартал", "130", format_currency(cum_tax_1)),
+        ("Сумма налога за полугодие", "131", format_currency(cum_tax_2)),
+        ("Сумма налога за 9 месяцев", "132", format_currency(cum_tax_3)),
+        ("Сумма налога за год", "133", format_currency(cum_tax_4)),
         ("Сумма страховых взносов за год", "143", 0),
     ]
     
     for idx, (name, code, val) in enumerate(data_211, 8):
         ws.cell(row=idx, column=1, value=name)
         ws.cell(row=idx, column=2, value=code)
-        ws.cell(row=idx, column=3, value=format_currency(val))
+        ws.cell(row=idx, column=3, value=val)
     
     # Раздел 1.1
     row_start = 8 + len(data_211) + 2
@@ -156,13 +175,13 @@ def generate_report(operations_data, ens_data, output_dir, user_id):
     
     data_11 = [
         ("Код ОКТМО", "010", IP_OKTMO),
-        ("Налог к уплате за год", "100", tax_payable),
+        ("Налог к уплате за год", "100", format_currency(tax_payable)),
     ]
     
     for idx, (name, code, val) in enumerate(data_11, row_start + 2):
         ws.cell(row=idx, column=1, value=name)
         ws.cell(row=idx, column=2, value=code)
-        ws.cell(row=idx, column=3, value=format_currency(val))
+        ws.cell(row=idx, column=3, value=val)
     
     ws.column_dimensions['A'].width = 35
     ws.column_dimensions['B'].width = 10

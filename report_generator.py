@@ -1,198 +1,230 @@
 import os
 from datetime import datetime
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment
+from openpyxl import load_workbook
+from openpyxl.utils import column_index_from_string
 
 IP_INN = "632312967829"
 IP_FIO = "Леонтьев Артём Владиславович"
 IP_OKTMO = "36701320"
 
 def format_currency(amount):
-    """Безопасное форматирование числа"""
-    try:
-        # Если пришла строка, преобразуем в число
-        if isinstance(amount, str):
-            amount = float(amount.replace(" ", "").replace(",", "."))
-        # Округляем до 2 знаков, если не целое
-        if amount == int(amount):
-            return int(amount)
-        return round(amount, 2)
-    except:
-        return 0
+    if amount == int(amount):
+        return int(amount)
+    return round(amount, 2)
 
-def generate_report(operations_data, ens_data, output_dir, user_id):
-    """
-    Генерация КУДиР и декларации
-    operations_data: список словарей с ключами date, amount, purpose
-    """
+def safe_write(ws, row, col, value):
+    """Безопасная запись в ячейку с учетом объединенных ячеек"""
+    try:
+        cell = ws.cell(row=row, column=col)
+        cell.value = value
+    except AttributeError:
+        for merged_range in ws.merged_cells.ranges:
+            if merged_range.min_row <= row <= merged_range.max_row and \
+               merged_range.min_col <= col <= merged_range.max_col:
+                ws.cell(row=merged_range.min_row, column=merged_range.min_col).value = value
+                return
+        raise
+
+def fill_kudir_template(operations, template_path, output_path, inn=IP_INN, fio=IP_FIO, year=2025):
+    """Заполнение шаблона КУДиР"""
+    wb = load_workbook(template_path)
     
-    # Нормализуем входные данные - преобразуем в список словарей
-    all_ops = []
+    # Лист 1 (титульный)
+    ws1 = wb["Лист1"]
     
-    if isinstance(operations_data, list):
-        for item in operations_data:
-            if isinstance(item, dict):
-                # Проверяем наличие всех нужных ключей
-                if 'date' in item and 'amount' in item:
-                    all_ops.append({
-                        'date': item['date'],
-                        'amount': float(item['amount']),
-                        'purpose': str(item.get('purpose', ''))
-                    })
-            elif isinstance(item, list):
-                for subitem in item:
-                    if isinstance(subitem, dict) and 'date' in subitem and 'amount' in subitem:
-                        all_ops.append({
-                            'date': subitem['date'],
-                            'amount': float(subitem['amount']),
-                            'purpose': str(subitem.get('purpose', ''))
-                        })
+    # Год (ячейка AD13 объединена с AE13)
+    safe_write(ws1, 13, column_index_from_string('AD'), year)
     
-    if not all_ops:
-        raise Exception("Нет данных для формирования отчетности")
+    # ФИО (D15:D16)
+    fio_parts = fio.split()
+    if len(fio_parts) >= 1:
+        safe_write(ws1, 15, 4, fio_parts[0])
+    if len(fio_parts) >= 2:
+        safe_write(ws1, 16, 4, fio_parts[1] + (" " + fio_parts[2] if len(fio_parts) > 2 else ""))
     
-    # Сортируем по дате
-    all_ops.sort(key=lambda x: x['date'])
+    # ИНН (D20:D21)
+    safe_write(ws1, 20, 4, inn)
     
-    # Расчет доходов по кварталам
+    # Объект налогообложения (D27:D28)
+    safe_write(ws1, 27, 4, "Доходы")
+    
+    # Лист 2 (доходы)
+    ws2 = wb["Лист2"]
+    
+    # Находим начало таблицы
+    start_row = None
+    for row in range(10, 30):
+        if ws2.cell(row=row, column=1).value == 1:
+            start_row = row
+            break
+    
+    if start_row is None:
+        start_row = 14
+    
+    # Сортируем операции по дате
+    sorted_ops = sorted(operations, key=lambda x: x['date'])
+    
+    quarterly_totals = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+    
+    for idx, op in enumerate(sorted_ops, 1):
+        quarter = (op['date'].month - 1) // 3 + 1
+        quarterly_totals[quarter] += op['amount']
+        
+        safe_write(ws2, start_row + idx - 1, 1, idx)
+        safe_write(ws2, start_row + idx - 1, 2, op['document'])
+        safe_write(ws2, start_row + idx - 1, 3, op['purpose'][:150])
+        safe_write(ws2, start_row + idx - 1, 4, format_currency(op['amount']))
+    
+    # Заполняем итоги на Лист2
+    for row in range(start_row, start_row + len(sorted_ops) + 30):
+        cell_val = ws2.cell(row=row, column=1).value
+        if cell_val and isinstance(cell_val, str):
+            if "Итого за I квартал" in cell_val:
+                safe_write(ws2, row, 4, format_currency(quarterly_totals[1]))
+            elif "Итого за II квартал" in cell_val:
+                safe_write(ws2, row, 4, format_currency(quarterly_totals[2]))
+            elif "Итого за полугодие" in cell_val:
+                safe_write(ws2, row, 4, format_currency(quarterly_totals[1] + quarterly_totals[2]))
+    
+    # Лист 3 (продолжение)
+    ws3 = wb["Лист3"]
+    
+    total_income = sum(quarterly_totals.values())
+    
+    for row in range(10, 80):
+        cell_val = ws3.cell(row=row, column=1).value
+        if cell_val and isinstance(cell_val, str):
+            if "Итого за III квартал" in cell_val:
+                safe_write(ws3, row, 4, format_currency(quarterly_totals[3]))
+            elif "Итого за 9 месяцев" in cell_val:
+                safe_write(ws3, row, 4, format_currency(quarterly_totals[1] + quarterly_totals[2] + quarterly_totals[3]))
+            elif "Итого за IV квартал" in cell_val:
+                safe_write(ws3, row, 4, format_currency(quarterly_totals[4]))
+            elif "Итого за год" in cell_val:
+                safe_write(ws3, row, 4, format_currency(total_income))
+            elif cell_val.strip() == "010":
+                safe_write(ws3, row, 4, format_currency(total_income))
+            elif cell_val.strip() == "020":
+                safe_write(ws3, row, 4, 0)
+            elif cell_val.strip() == "040":
+                safe_write(ws3, row, 4, format_currency(total_income))
+    
+    wb.save(output_path)
+    return total_income
+
+
+def fill_declaration_template(operations, ens_data, template_path, output_excel, output_xml, inn=IP_INN, fio=IP_FIO):
+    """Заполнение шаблона декларации"""
+    
+    # Расчет доходов
     quarterly = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
-    for op in all_ops:
+    for op in operations:
         quarter = (op['date'].month - 1) // 3 + 1
         quarterly[quarter] += op['amount']
     
-    total_income = quarterly[1] + quarterly[2] + quarterly[3] + quarterly[4]
+    total_income = sum(quarterly.values())
     tax_rate = 6
     tax_amount = total_income * tax_rate / 100
     
-    # Проверка уплаты взносов в 2025
-    paid_dates = ens_data.get('insurance_paid_dates', [])
-    paid_in_2025 = False
-    for d in paid_dates:
-        if d and hasattr(d, 'year') and d.year == 2025:
-            paid_in_2025 = True
-            break
-    
+    paid_in_2025 = any(d.year == 2025 for d in ens_data.get('insurance_paid_dates', []))
     insurance_paid = ens_data.get('insurance_paid', 0)
-    if isinstance(insurance_paid, str):
-        insurance_paid = float(insurance_paid.replace(" ", "").replace(",", "."))
     
     if paid_in_2025:
         tax_payable = max(0, tax_amount - insurance_paid)
+        deductible = insurance_paid
     else:
         tax_payable = tax_amount
+        deductible = 0
     
-    # Суммы нарастающим
-    cum_income_1 = quarterly[1]
-    cum_income_2 = quarterly[1] + quarterly[2]
-    cum_income_3 = quarterly[1] + quarterly[2] + quarterly[3]
-    cum_income_4 = total_income
+    cum_income = {
+        1: quarterly[1],
+        2: quarterly[1] + quarterly[2],
+        3: quarterly[1] + quarterly[2] + quarterly[3],
+        4: total_income
+    }
     
-    cum_tax_1 = cum_income_1 * tax_rate / 100
-    cum_tax_2 = cum_income_2 * tax_rate / 100
-    cum_tax_3 = cum_income_3 * tax_rate / 100
-    cum_tax_4 = tax_amount
+    cum_tax = {
+        1: cum_income[1] * tax_rate / 100,
+        2: cum_income[2] * tax_rate / 100,
+        3: cum_income[3] * tax_rate / 100,
+        4: tax_amount
+    }
     
-    # ========== КУДиР ==========
-    kudir_path = os.path.join(output_dir, f"kudir_{user_id}.xlsx")
+    if paid_in_2025:
+        cum_deductible = {
+            1: min(cum_tax[1], deductible),
+            2: min(cum_tax[2], deductible),
+            3: min(cum_tax[3], deductible),
+            4: min(cum_tax[4], deductible)
+        }
+    else:
+        cum_deductible = {1: 0, 2: 0, 3: 0, 4: 0}
     
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "КУДиР"
+    wb = load_workbook(template_path)
     
-    # Заголовок
-    ws['A1'] = "Книга учета доходов и расходов"
-    ws['A2'] = f"ИП {IP_FIO}"
-    ws['A3'] = f"ИНН {IP_INN}"
-    ws['A4'] = "за 2025 год"
-    ws['A5'] = "Объект налогообложения: Доходы"
+    # Лист "стр.1" - титульный и расчетный
+    ws = wb["стр.1"]
     
-    # Таблица
-    headers = ['№ п/п', 'Дата', 'Содержание операции', 'Сумма дохода']
-    for col, header in enumerate(headers, 1):
-        cell = ws.cell(row=7, column=col, value=header)
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal='center')
+    # ИНН (AG7:AG8)
+    safe_write(ws, 7, column_index_from_string('AG'), inn)
     
-    total = 0
-    for idx, op in enumerate(all_ops, 1):
-        ws.cell(row=7 + idx, column=1, value=idx)
-        ws.cell(row=7 + idx, column=2, value=op['date'].strftime('%d.%m.%Y'))
-        purpose = op['purpose'][:150] if len(op['purpose']) > 150 else op['purpose']
-        ws.cell(row=7 + idx, column=3, value=purpose)
-        amount_val = format_currency(op['amount'])
-        ws.cell(row=7 + idx, column=4, value=amount_val)
-        total += op['amount']
+    # Отчетный год (BJ14:BK14)
+    safe_write(ws, 14, column_index_from_string('BJ'), 2025)
     
-    # Итог
-    total_row = 7 + len(all_ops) + 1
-    ws.cell(row=total_row, column=3, value="ИТОГО:")
-    ws.cell(row=total_row, column=3).font = Font(bold=True)
-    ws.cell(row=total_row, column=4, value=format_currency(total))
+    # ФИО
+    for row in range(30, 50):
+        cell_val = ws.cell(row=row, column=1).value
+        if cell_val and isinstance(cell_val, str) and "фамилия" in cell_val.lower():
+            safe_write(ws, row+1, 1, fio)
+            break
     
-    for col in range(1, 5):
-        ws.column_dimensions[chr(64 + col)].width = 20
+    # ОКВЭД
+    for row in range(30, 60):
+        cell_val = ws.cell(row=row, column=1).value
+        if cell_val and isinstance(cell_val, str) and "ОКВЭД" in cell_val:
+            safe_write(ws, row, 2, "47.91")
+            break
     
-    wb.save(kudir_path)
+    # Заполнение строк по кодам (колонка C - код, колонка D - значение)
+    for row in range(50, 200):
+        code_cell = ws.cell(row=row, column=3).value
+        if code_cell:
+            code = str(code_cell).strip()
+            if code == "010":
+                safe_write(ws, row, 4, format_currency(cum_income[1]))
+            elif code == "011":
+                safe_write(ws, row, 4, format_currency(cum_income[2]))
+            elif code == "012":
+                safe_write(ws, row, 4, format_currency(cum_income[3]))
+            elif code == "013":
+                safe_write(ws, row, 4, format_currency(cum_income[4]))
+            elif code == "020":
+                safe_write(ws, row, 4, tax_rate)
+            elif code == "030":
+                safe_write(ws, row, 4, format_currency(cum_tax[1]))
+            elif code == "031":
+                safe_write(ws, row, 4, format_currency(cum_tax[2]))
+            elif code == "032":
+                safe_write(ws, row, 4, format_currency(cum_tax[3]))
+            elif code == "033":
+                safe_write(ws, row, 4, format_currency(cum_tax[4]))
+            elif code == "040":
+                safe_write(ws, row, 4, format_currency(cum_deductible[1]))
+            elif code == "041":
+                safe_write(ws, row, 4, format_currency(cum_deductible[2]))
+            elif code == "042":
+                safe_write(ws, row, 4, format_currency(cum_deductible[3]))
+            elif code == "043":
+                safe_write(ws, row, 4, format_currency(cum_deductible[4]))
+            elif code == "050":
+                safe_write(ws, row, 4, IP_OKTMO)
+            elif code == "060":
+                safe_write(ws, row, 4, format_currency(tax_payable))
     
-    # ========== Декларация Excel ==========
-    decl_excel = os.path.join(output_dir, f"declaration_{user_id}.xlsx")
+    wb.save(output_excel)
     
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Декларация УСН"
-    
-    ws['A1'] = "Налоговая декларация по УСН"
-    ws['A2'] = f"ИП {IP_FIO}"
-    ws['A3'] = f"ИНН {IP_INN}"
-    ws['A4'] = "за 2025 год"
-    
-    # Раздел 2.1.1
-    ws['A6'] = "Раздел 2.1.1. Доходы"
-    ws['A6'].font = Font(bold=True)
-    
-    data_211 = [
-        ("Доход за 1 квартал", "110", format_currency(cum_income_1)),
-        ("Доход за полугодие", "111", format_currency(cum_income_2)),
-        ("Доход за 9 месяцев", "112", format_currency(cum_income_3)),
-        ("Доход за год", "113", format_currency(cum_income_4)),
-        ("Налоговая ставка (%)", "120", tax_rate),
-        ("Сумма налога за 1 квартал", "130", format_currency(cum_tax_1)),
-        ("Сумма налога за полугодие", "131", format_currency(cum_tax_2)),
-        ("Сумма налога за 9 месяцев", "132", format_currency(cum_tax_3)),
-        ("Сумма налога за год", "133", format_currency(cum_tax_4)),
-        ("Сумма страховых взносов за год", "143", 0),
-    ]
-    
-    for idx, (name, code, val) in enumerate(data_211, 8):
-        ws.cell(row=idx, column=1, value=name)
-        ws.cell(row=idx, column=2, value=code)
-        ws.cell(row=idx, column=3, value=val)
-    
-    # Раздел 1.1
-    row_start = 8 + len(data_211) + 2
-    ws.cell(row=row_start, column=1, value="Раздел 1.1. Сумма налога к уплате")
-    ws.cell(row=row_start, column=1).font = Font(bold=True)
-    
-    data_11 = [
-        ("Код ОКТМО", "010", IP_OKTMO),
-        ("Налог к уплате за год", "100", format_currency(tax_payable)),
-    ]
-    
-    for idx, (name, code, val) in enumerate(data_11, row_start + 2):
-        ws.cell(row=idx, column=1, value=name)
-        ws.cell(row=idx, column=2, value=code)
-        ws.cell(row=idx, column=3, value=val)
-    
-    ws.column_dimensions['A'].width = 35
-    ws.column_dimensions['B'].width = 10
-    ws.column_dimensions['C'].width = 20
-    
-    wb.save(decl_excel)
-    
-    # ========== XML ==========
-    decl_xml = os.path.join(output_dir, f"declaration_{user_id}.xml")
-    
-    fio_parts = IP_FIO.split()
+    # XML
+    fio_parts = fio.split()
     last_name = fio_parts[0] if len(fio_parts) > 0 else ""
     first_name = fio_parts[1] if len(fio_parts) > 1 else ""
     patronymic = fio_parts[2] if len(fio_parts) > 2 else ""
@@ -209,7 +241,7 @@ def generate_report(operations_data, ens_data, output_dir, user_id):
         <ОтчетныйГод>2025</ОтчетныйГод>
     </НалогПериод>
     <Налогоплательщик>
-        <ИНН>{IP_INN}</ИНН>
+        <ИНН>{inn}</ИНН>
         <ИП>
             <ФИО>
                 <Фамилия>{last_name}</Фамилия>
@@ -224,24 +256,39 @@ def generate_report(operations_data, ens_data, output_dir, user_id):
             <СумНал100>{int(tax_payable)}</СумНал100>
         </Раздел1_1>
         <Раздел2_1_1>
-            <СумДоход110>{int(cum_income_1)}</СумДоход110>
-            <СумДоход111>{int(cum_income_2)}</СумДоход111>
-            <СумДоход112>{int(cum_income_3)}</СумДоход112>
-            <СумДоход113>{int(cum_income_4)}</СумДоход113>
+            <СумДоход110>{int(cum_income[1])}</СумДоход110>
+            <СумДоход111>{int(cum_income[2])}</СумДоход111>
+            <СумДоход112>{int(cum_income[3])}</СумДоход112>
+            <СумДоход113>{int(cum_income[4])}</СумДоход113>
             <НалСтавка120>{tax_rate}</НалСтавка120>
-            <СумИсчисНал130>{int(cum_tax_1)}</СумИсчисНал130>
-            <СумИсчисНал131>{int(cum_tax_2)}</СумИсчисНал131>
-            <СумИсчисНал132>{int(cum_tax_3)}</СумИсчисНал132>
-            <СумИсчисНал133>{int(cum_tax_4)}</СумИсчисНал133>
-            <СумУплНал140>0</СумУплНал140>
-            <СумУплНал141>0</СумУплНал141>
-            <СумУплНал142>0</СумУплНал142>
-            <СумУплНал143>0</СумУплНал143>
+            <СумИсчисНал130>{int(cum_tax[1])}</СумИсчисНал130>
+            <СумИсчисНал131>{int(cum_tax[2])}</СумИсчисНал131>
+            <СумИсчисНал132>{int(cum_tax[3])}</СумИсчисНал132>
+            <СумИсчисНал133>{int(cum_tax[4])}</СумИсчисНал133>
+            <СумУплНал140>{int(cum_deductible[1])}</СумУплНал140>
+            <СумУплНал141>{int(cum_deductible[2])}</СумУплНал141>
+            <СумУплНал142>{int(cum_deductible[3])}</СумУплНал142>
+            <СумУплНал143>{int(cum_deductible[4])}</СумУплНал143>
         </Раздел2_1_1>
     </Показатели>
 </Файл>'''
     
-    with open(decl_xml, 'w', encoding='utf-8') as f:
+    with open(output_xml, 'w', encoding='utf-8') as f:
         f.write(xml)
+    
+    return tax_payable, total_income
+
+
+def generate_report(operations, ens_data, output_dir, user_id, kudir_template, decl_template):
+    """Генерация отчетности с использованием шаблонов"""
+    
+    kudir_path = os.path.join(output_dir, f"kudir_{user_id}.xlsx")
+    total_income = fill_kudir_template(operations, kudir_template, kudir_path)
+    
+    decl_excel = os.path.join(output_dir, f"declaration_{user_id}.xlsx")
+    decl_xml = os.path.join(output_dir, f"declaration_{user_id}.xml")
+    tax_payable, total_income = fill_declaration_template(
+        operations, ens_data, decl_template, decl_excel, decl_xml
+    )
     
     return kudir_path, decl_excel, decl_xml, total_income, tax_payable

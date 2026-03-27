@@ -28,21 +28,22 @@ user_sessions = {}
 class UserSession:
     def __init__(self, user_id):
         self.user_id = user_id
-        self.bank_operations = []
+        self.bank_operations = []  # будет хранить список операций (словарей)
         self.ens_data = {
             'insurance_accrued': 0,
             'insurance_paid': 0,
             'insurance_paid_dates': [],
             'penalties': 0
         }
-        self.ens_loaded = False  # флаг, что ЕНС загружена
+        self.ens_loaded = False
 
     def add_bank_operations(self, operations):
+        """Добавляет операции (operations - список словарей)"""
         self.bank_operations.extend(operations)
 
     def set_ens_data(self, data):
         self.ens_data = data
-        self.ens_loaded = True  # помечаем, что ЕНС загружена
+        self.ens_loaded = True
 
     def reset(self):
         self.bank_operations = []
@@ -66,7 +67,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "3️⃣ Введите /report\n\n"
         "📌 *Сроки за 2025 год:*\n"
         "• Декларацию сдать до *27 апреля 2026*\n"
-        "• Налог уплатить до *28 апреля 2026*",
+        "• Налог уплатить до *28 апреля 2026*\n\n"
+        "📁 Поддерживаются файлы: .xlsx, .xls, .csv",
         parse_mode="Markdown"
     )
 
@@ -95,13 +97,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if operations:
                 session.add_bank_operations(operations)
                 total = sum(op['amount'] for op in operations)
+                total_all = sum(op['amount'] for op in session.bank_operations)
                 await update.message.reply_text(
-                    f"✅ Найдено {len(operations)} операций\n💰 Сумма: {total:,.2f} ₽\n\n"
-                    f"📌 Всего загружено операций: {len(session.bank_operations)}\n"
-                    f"📌 Всего доходов: {sum(op['amount'] for op in session.bank_operations):,.2f} ₽"
+                    f"✅ Найдено {len(operations)} операций\n"
+                    f"💰 Сумма в файле: {total:,.2f} ₽\n"
+                    f"📊 Всего загружено: {len(session.bank_operations)} операций на {total_all:,.2f} ₽\n\n"
+                    f"📌 Загружайте другие выписки или отправьте выписку ЕНС (CSV)"
                 )
             else:
-                await update.message.reply_text("⚠️ Доходов не найдено")
+                await update.message.reply_text("⚠️ В выписке не найдено доходов (поступлений)")
         
         elif filename.endswith('.csv'):
             await update.message.reply_text("📥 Обрабатываю выписку ЕНС...")
@@ -121,7 +125,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         else:
-            await update.message.reply_text("❌ Поддерживаются .xlsx, .xls, .csv")
+            await update.message.reply_text("❌ Поддерживаются только .xlsx, .xls и .csv")
     
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
@@ -141,22 +145,35 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session = user_sessions[user_id]
     
     if not session.bank_operations:
-        await update.message.reply_text("⚠️ Сначала загрузите выписки из банков")
+        await update.message.reply_text("⚠️ Сначала загрузите выписки из банков (Excel файлы)")
         return
     
     if not session.ens_loaded:
         await update.message.reply_text("⚠️ Сначала загрузите выписку ЕНС (CSV файл)")
         return
     
-    await update.message.reply_text("🔄 Формирую отчетность...")
+    await update.message.reply_text("🔄 Формирую отчетность... Это может занять несколько секунд")
     
     try:
-        # Собираем все операции
+        # session.bank_operations уже должен быть списком словарей
+        # Проверяем и нормализуем
         all_ops = []
-        for ops in session.bank_operations:
-            all_ops.extend(ops)
+        for item in session.bank_operations:
+            if isinstance(item, dict):
+                all_ops.append(item)
+            elif isinstance(item, list):
+                for subitem in item:
+                    if isinstance(subitem, dict):
+                        all_ops.append(subitem)
+        
+        if not all_ops:
+            await update.message.reply_text("⚠️ Нет данных для формирования отчетности")
+            return
+        
+        # Сортируем по дате
         all_ops.sort(key=lambda x: x['date'])
         
+        # Генерируем отчетность
         kudir_path, decl_excel, decl_xml, total_income, tax_payable = generate_report(
             all_ops, session.ens_data, OUTPUT_DIR, user_id
         )
@@ -165,7 +182,8 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ *Отчетность готова!*\n\n"
             f"📊 Доход за 2025: {total_income:,.2f} ₽\n"
             f"💰 Налог к уплате: {tax_payable:,.2f} ₽\n\n"
-            f"📌 Сдать декларацию до *27 апреля 2026*",
+            f"📌 Сдать декларацию до *27 апреля 2026*\n"
+            f"📌 Уплатить налог до *28 апреля 2026*",
             parse_mode="Markdown"
         )
         
@@ -177,9 +195,21 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         with open(decl_xml, 'rb') as f:
             await update.message.reply_document(f, filename="declaration_usn_2025.xml", caption="📎 XML для загрузки в ЛК ФНС")
+        
+        await update.message.reply_text(
+            "🎉 *Готово!*\n\n"
+            "Что дальше:\n"
+            "1. Проверьте декларацию в Excel\n"
+            "2. Загрузите XML в Личный кабинет ИП на сайте ФНС\n"
+            "3. Подпишите электронной подписью и отправьте\n"
+            "4. Уплатите налог до 28 апреля 2026",
+            parse_mode="Markdown"
+        )
     
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -205,14 +235,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Введите /report\n\n"
         "*Сроки за 2025 год:*\n"
         "• Декларация: до 27 апреля 2026\n"
-        "• Уплата налога: до 28 апреля 2026",
+        "• Уплата налога: до 28 апреля 2026\n\n"
+        "*Важно:*\n"
+        "• За несдачу декларации — блокировка счета\n"
+        "• За просрочку уплаты налога — только пени",
         parse_mode="Markdown"
     )
 
 
 def main():
     if not BOT_TOKEN:
-        print("❌ BOT_TOKEN не задан в .env")
+        print("❌ Ошибка: BOT_TOKEN не задан в .env файле")
         sys.exit(1)
     
     app = Application.builder().token(BOT_TOKEN).build()
@@ -224,6 +257,8 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     
     print("🤖 Бот запущен...")
+    print(f"📁 Папка для выгрузки: {OUTPUT_DIR}")
+    
     app.run_polling()
 
 

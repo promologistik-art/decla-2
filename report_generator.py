@@ -12,17 +12,30 @@ def format_currency(amount):
         return int(amount)
     return round(amount, 2)
 
-def generate_report(operations_list, ens_data, output_dir, user_id):
-    """Генерация КУДиР и декларации"""
+def generate_report(operations_data, ens_data, output_dir, user_id):
+    """
+    Генерация КУДиР и декларации
+    operations_data: список операций, каждая операция - словарь с ключами date, amount, purpose
+    """
     
-    # operations_list может быть списком списков или списком словарей
-    # Преобразуем в плоский список словарей
+    # Нормализуем входные данные - преобразуем в список словарей
     all_ops = []
-    for item in operations_list:
-        if isinstance(item, list):
-            all_ops.extend(item)
-        else:
-            all_ops.append(item)
+    
+    # Проверяем тип operations_data
+    if isinstance(operations_data, list):
+        for item in operations_data:
+            if isinstance(item, dict):
+                # Это уже словарь
+                if 'date' in item and 'amount' in item:
+                    all_ops.append(item)
+            elif isinstance(item, list):
+                # Это список словарей
+                for subitem in item:
+                    if isinstance(subitem, dict) and 'date' in subitem and 'amount' in subitem:
+                        all_ops.append(subitem)
+    
+    if not all_ops:
+        raise Exception("Нет данных для формирования отчетности")
     
     # Сортируем по дате
     all_ops.sort(key=lambda x: x['date'])
@@ -38,40 +51,30 @@ def generate_report(operations_list, ens_data, output_dir, user_id):
     tax_amount = total_income * tax_rate / 100
     
     # Проверка уплаты взносов в 2025
-    paid_in_2025 = any(d.year == 2025 for d in ens_data.get('insurance_paid_dates', []))
+    paid_dates = ens_data.get('insurance_paid_dates', [])
+    paid_in_2025 = False
+    for d in paid_dates:
+        if d and hasattr(d, 'year') and d.year == 2025:
+            paid_in_2025 = True
+            break
+    
     insurance_paid = ens_data.get('insurance_paid', 0)
     
     if paid_in_2025:
         tax_payable = max(0, tax_amount - insurance_paid)
-        deductible = insurance_paid
     else:
         tax_payable = tax_amount
-        deductible = 0
     
     # Суммы нарастающим
-    cum_income = {
-        1: quarterly[1],
-        2: quarterly[1] + quarterly[2],
-        3: quarterly[1] + quarterly[2] + quarterly[3],
-        4: total_income
-    }
+    cum_income_1 = quarterly[1]
+    cum_income_2 = quarterly[1] + quarterly[2]
+    cum_income_3 = quarterly[1] + quarterly[2] + quarterly[3]
+    cum_income_4 = total_income
     
-    cum_tax = {
-        1: cum_income[1] * tax_rate / 100,
-        2: cum_income[2] * tax_rate / 100,
-        3: cum_income[3] * tax_rate / 100,
-        4: tax_amount
-    }
-    
-    if paid_in_2025:
-        cum_deductible = {
-            1: min(cum_tax[1], deductible),
-            2: min(cum_tax[2], deductible),
-            3: min(cum_tax[3], deductible),
-            4: min(cum_tax[4], deductible)
-        }
-    else:
-        cum_deductible = {1: 0, 2: 0, 3: 0, 4: 0}
+    cum_tax_1 = cum_income_1 * tax_rate / 100
+    cum_tax_2 = cum_income_2 * tax_rate / 100
+    cum_tax_3 = cum_income_3 * tax_rate / 100
+    cum_tax_4 = tax_amount
     
     # ========== КУДиР ==========
     kudir_path = os.path.join(output_dir, f"kudir_{user_id}.xlsx")
@@ -81,10 +84,10 @@ def generate_report(operations_list, ens_data, output_dir, user_id):
     ws.title = "КУДиР"
     
     # Заголовок
-    ws['A1'] = f"Книга учета доходов и расходов"
+    ws['A1'] = "Книга учета доходов и расходов"
     ws['A2'] = f"ИП {IP_FIO}"
     ws['A3'] = f"ИНН {IP_INN}"
-    ws['A4'] = f"за 2025 год"
+    ws['A4'] = "за 2025 год"
     ws['A5'] = "Объект налогообложения: Доходы"
     
     # Таблица
@@ -98,7 +101,7 @@ def generate_report(operations_list, ens_data, output_dir, user_id):
     for idx, op in enumerate(all_ops, 1):
         ws.cell(row=7 + idx, column=1, value=idx)
         ws.cell(row=7 + idx, column=2, value=op['date'].strftime('%d.%m.%Y'))
-        ws.cell(row=7 + idx, column=3, value=op['purpose'])
+        ws.cell(row=7 + idx, column=3, value=op['purpose'][:150] if len(op['purpose']) > 150 else op['purpose'])
         ws.cell(row=7 + idx, column=4, value=op['amount'])
         total += op['amount']
     
@@ -129,16 +132,16 @@ def generate_report(operations_list, ens_data, output_dir, user_id):
     ws['A6'].font = Font(bold=True)
     
     data_211 = [
-        ("Доход за 1 квартал", "110", cum_income[1]),
-        ("Доход за полугодие", "111", cum_income[2]),
-        ("Доход за 9 месяцев", "112", cum_income[3]),
-        ("Доход за год", "113", cum_income[4]),
+        ("Доход за 1 квартал", "110", cum_income_1),
+        ("Доход за полугодие", "111", cum_income_2),
+        ("Доход за 9 месяцев", "112", cum_income_3),
+        ("Доход за год", "113", cum_income_4),
         ("Налоговая ставка (%)", "120", tax_rate),
-        ("Сумма налога за 1 квартал", "130", cum_tax[1]),
-        ("Сумма налога за полугодие", "131", cum_tax[2]),
-        ("Сумма налога за 9 месяцев", "132", cum_tax[3]),
-        ("Сумма налога за год", "133", cum_tax[4]),
-        ("Сумма страховых взносов за год", "143", cum_deductible[4]),
+        ("Сумма налога за 1 квартал", "130", cum_tax_1),
+        ("Сумма налога за полугодие", "131", cum_tax_2),
+        ("Сумма налога за 9 месяцев", "132", cum_tax_3),
+        ("Сумма налога за год", "133", cum_tax_4),
+        ("Сумма страховых взносов за год", "143", 0),
     ]
     
     for idx, (name, code, val) in enumerate(data_211, 8):
@@ -202,19 +205,19 @@ def generate_report(operations_list, ens_data, output_dir, user_id):
             <СумНал100>{int(tax_payable)}</СумНал100>
         </Раздел1_1>
         <Раздел2_1_1>
-            <СумДоход110>{int(cum_income[1])}</СумДоход110>
-            <СумДоход111>{int(cum_income[2])}</СумДоход111>
-            <СумДоход112>{int(cum_income[3])}</СумДоход112>
-            <СумДоход113>{int(cum_income[4])}</СумДоход113>
+            <СумДоход110>{int(cum_income_1)}</СумДоход110>
+            <СумДоход111>{int(cum_income_2)}</СумДоход111>
+            <СумДоход112>{int(cum_income_3)}</СумДоход112>
+            <СумДоход113>{int(cum_income_4)}</СумДоход113>
             <НалСтавка120>{tax_rate}</НалСтавка120>
-            <СумИсчисНал130>{int(cum_tax[1])}</СумИсчисНал130>
-            <СумИсчисНал131>{int(cum_tax[2])}</СумИсчисНал131>
-            <СумИсчисНал132>{int(cum_tax[3])}</СумИсчисНал132>
-            <СумИсчисНал133>{int(cum_tax[4])}</СумИсчисНал133>
-            <СумУплНал140>{int(cum_deductible[1])}</СумУплНал140>
-            <СумУплНал141>{int(cum_deductible[2])}</СумУплНал141>
-            <СумУплНал142>{int(cum_deductible[3])}</СумУплНал142>
-            <СумУплНал143>{int(cum_deductible[4])}</СумУплНал143>
+            <СумИсчисНал130>{int(cum_tax_1)}</СумИсчисНал130>
+            <СумИсчисНал131>{int(cum_tax_2)}</СумИсчисНал131>
+            <СумИсчисНал132>{int(cum_tax_3)}</СумИсчисНал132>
+            <СумИсчисНал133>{int(cum_tax_4)}</СумИсчисНал133>
+            <СумУплНал140>0</СумУплНал140>
+            <СумУплНал141>0</СумУплНал141>
+            <СумУплНал142>0</СумУплНал142>
+            <СумУплНал143>0</СумУплНал143>
         </Раздел2_1_1>
     </Показатели>
 </Файл>'''

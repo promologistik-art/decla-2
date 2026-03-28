@@ -32,24 +32,20 @@ def write_inn_digit_by_digit(ws, start_row, start_col, inn):
 
 
 def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_accounts, year=2025):
-    """
-    Заполнение шаблона КУДиР
-    
-    ip_accounts: список словарей с ключами 'number', 'bank', 'bik'
-    """
+    """Заполнение шаблона КУДиР"""
     wb = load_workbook(template_path)
     
     # ========== ЛИСТ 1 (ТИТУЛЬНЫЙ) ==========
     ws1 = wb["Лист1"]
     
-    # Год (H15) — последние 2 цифры, "20" уже есть в шаблоне
+    # Год: в H15 уже есть "20", пишем "25" в I15 (левая верхняя объединения H15:J15)
     year_last_two = year % 100
-    safe_write(ws1, 15, column_index_from_string('H'), year_last_two)
+    safe_write(ws1, 15, column_index_from_string('I'), year_last_two)
     
     # ФИО (V18)
     safe_write(ws1, 18, column_index_from_string('V'), fio)
     
-    # ИНН (A28:AA28) — по одной цифре в ячейку
+    # ИНН (A28:AA28) — по одной цифре в ячейку, начиная с A28
     write_inn_digit_by_digit(ws1, 28, 1, inn)
     
     # Форма по ОКУД (BB14)
@@ -64,13 +60,13 @@ def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_acc
     # Объект налогообложения (P30)
     safe_write(ws1, 30, column_index_from_string('P'), "Доходы")
     
-    # Счета ИП (A38, A40, A42, A44...)
+    # Счета ИП (A38, A40, A42...)
     row = 38
     for acc in ip_accounts:
         account_text = f"{acc['number']} {acc['bank']} БИК {acc['bik']}"
         safe_write(ws1, row, 1, account_text)
         row += 2
-    
+       
     # ========== ПОДГОТОВКА ДАННЫХ ==========
     sorted_ops = sorted(operations, key=lambda x: x['date'])
     total_income = sum(op['amount'] for op in sorted_ops)

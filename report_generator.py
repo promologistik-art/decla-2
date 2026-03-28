@@ -253,15 +253,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
 
 # ========== ГЛАВНАЯ ФУНКЦИЯ - 6 АРГУМЕНТОВ ==========
 def generate_report(operations, ens_data, output_dir, user_id, kudir_template, decl_template):
-    """
-    Генерация отчетности с использованием шаблонов
-    operations: список операций
-    ens_data: данные из ЕНС
-    output_dir: папка для сохранения
-    user_id: id пользователя
-    kudir_template: путь к шаблону КУДиР
-    decl_template: путь к шаблону декларации
-    """
+    """Генерация отчетности"""
     kudir_path = os.path.join(output_dir, f"kudir_{user_id}.xlsx")
     total_income = fill_kudir_template(operations, kudir_template, kudir_path)
     

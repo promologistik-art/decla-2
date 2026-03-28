@@ -9,15 +9,38 @@ def format_currency(amount):
     return round(amount, 2)
 
 def safe_write(ws, row, col, value):
+    """
+    Безопасная запись в ячейку с учетом объединенных ячеек
+    openpyxl не позволяет писать в объединенные ячейки, нужно писать в левую верхнюю
+    """
+    # Если значение None или пустая строка, просто возвращаем
+    if value is None:
+        return
+    
+    # Пробуем записать напрямую
+    try:
+        cell = ws.cell(row=row, column=col)
+        cell.value = value
+        return
+    except AttributeError:
+        pass
+    except Exception:
+        pass
+    
+    # Если не получилось, ищем левую верхнюю ячейку объединенного диапазона
+    for merged_range in ws.merged_cells.ranges:
+        if merged_range.min_row <= row <= merged_range.max_row and \
+           merged_range.min_col <= col <= merged_range.max_col:
+            # Нашли объединенный диапазон, пишем в левую верхнюю ячейку
+            top_left = ws.cell(row=merged_range.min_row, column=merged_range.min_col)
+            top_left.value = value
+            return
+    
+    # Если не нашли объединение, пробуем еще раз напрямую
     try:
         ws.cell(row=row, column=col).value = value
-    except AttributeError:
-        for merged_range in ws.merged_cells.ranges:
-            if merged_range.min_row <= row <= merged_range.max_row and \
-               merged_range.min_col <= col <= merged_range.max_col:
-                ws.cell(row=merged_range.min_row, column=merged_range.min_col).value = value
-                return
-        raise
+    except:
+        pass
 
 
 def fill_kudir_template(operations, template_path, output_path, inn, fio, year=2025):
@@ -27,7 +50,7 @@ def fill_kudir_template(operations, template_path, output_path, inn, fio, year=2
     # Лист 1 (титульный)
     ws1 = wb["Лист1"]
     
-    # Год (AD13:AE13)
+    # Год (AD13:AE13) - пишем в левую верхнюю (AD13)
     safe_write(ws1, 13, column_index_from_string('AD'), year)
     
     # ФИО (D15:D16)
@@ -55,7 +78,7 @@ def fill_kudir_template(operations, template_path, output_path, inn, fio, year=2
     # Лист 2 (доходы I-II квартал)
     ws2 = wb["Лист2"]
     
-    # Очищаем старые данные
+    # Очищаем старые данные в таблице (строки 14-200)
     for row in range(14, 200):
         for col in range(1, 6):
             ws2.cell(row=row, column=col).value = None
@@ -179,7 +202,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
             safe_write(ws, row, 2, "47.91")
             break
     
-    # Заполнение строк по кодам
+    # Заполнение строк по кодам (колонка C - код, колонка D - значение)
     for row in range(50, 200):
         code_cell = ws.cell(row=row, column=3).value
         if code_cell:

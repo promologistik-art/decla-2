@@ -29,9 +29,10 @@ def safe_write(ws, row, col, value):
 def write_inn_digit_by_digit(ws, start_row, start_col, inn):
     """Записывает ИНН по одной цифре в ячейку"""
     inn_str = str(inn)
+    # Очищаем от всех нецифровых символов
+    inn_str = ''.join(ch for ch in inn_str if ch.isdigit())
     for i, digit in enumerate(inn_str):
-        if digit.isdigit():
-            safe_write(ws, start_row, start_col + i, int(digit))
+        safe_write(ws, start_row, start_col + i, int(digit))
 
 
 def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_accounts, year=2025):

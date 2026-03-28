@@ -37,21 +37,27 @@ class UserSession:
             'penalties': 0
         }
         self.ens_loaded = False
-        self.inn = ""      # ИНН из выписки
-        self.fio = ""      # ФИО из выписки
-        self.oktmo = ""    # ОКТМО из ЕНС
+        self.inn = ""
+        self.fio = ""
+        self.oktmo = ""
+        self.ip_accounts = []  # список счетов ИП
 
-    def add_bank_operations(self, operations, inn="", fio=""):
+    def add_bank_operations(self, operations, inn="", fio="", accounts=None):
         self.bank_operations.extend(operations)
-        if inn and not self.inn:
+        # Обновляем ИНН и ФИО
+        if inn and len(inn) >= 10 and inn.isdigit():
             self.inn = inn
-        if fio and not self.fio:
+        if fio and len(fio) > 10 and not any(x in fio for x in ["Р/С", "БИК", "ИНН"]):
             self.fio = fio
+        # Добавляем счета
+        if accounts:
+            for acc in accounts:
+                if acc['number'] not in [a['number'] for a in self.ip_accounts]:
+                    self.ip_accounts.append(acc)
 
     def set_ens_data(self, data):
         self.ens_data = data
         self.ens_loaded = True
-        # Извлекаем ОКТМО из данных ЕНС
         if 'oktmo' in data and data['oktmo']:
             self.oktmo = data['oktmo']
 
@@ -67,6 +73,7 @@ class UserSession:
         self.inn = ""
         self.fio = ""
         self.oktmo = ""
+        self.ip_accounts = []
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -104,21 +111,29 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if filename.endswith(('.xlsx', '.xls')):
             await update.message.reply_text("📥 Обрабатываю выписку из банка...")
-            operations, inn, fio = parse_bank_statement(tmp_path)
+            operations, inn, fio, accounts = parse_bank_statement(tmp_path)
             
             if operations:
-                session.add_bank_operations(operations, inn, fio)
+                session.add_bank_operations(operations, inn, fio, accounts)
                 total = sum(op['amount'] for op in operations)
                 total_all = sum(op['amount'] for op in session.bank_operations)
                 
                 msg = f"✅ Найдено {len(operations)} операций\n💰 Сумма в файле: {total:,.2f} ₽\n📊 Всего загружено: {len(session.bank_operations)} операций на {total_all:,.2f} ₽"
                 
-                if inn:
-                    msg += f"\n🏢 ИНН: {inn}"
-                if fio:
-                    msg += f"\n👤 ИП: {fio}"
+                if session.inn:
+                    msg += f"\n🏢 ИНН: {session.inn}"
+                if session.fio:
+                    msg += f"\n👤 ИП: {session.fio}"
+                if session.ip_accounts:
+                    msg += f"\n🏦 Счета: {', '.join([a['number'] for a in session.ip_accounts])}"
                 
                 await update.message.reply_text(msg)
+                
+                await update.message.reply_text(
+                    "📌 *Следующий шаг:* загрузите выписку с Единого налогового счета (ЕНС) в формате CSV\n\n"
+                    "Выписку ЕНС можно скачать в личном кабинете налогоплательщика",
+                    parse_mode="Markdown"
+                )
             else:
                 await update.message.reply_text("⚠️ В выписке не найдено доходов")
         
@@ -138,7 +153,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"• Уплачено в 2025: {'Да' if paid_in_2025 else 'Нет'}\n"
                 f"• Пени: {ens_data['penalties']:,.2f} ₽\n"
                 f"• ОКТМО: {oktmo}\n\n"
-                f"✅ Теперь введите /report"
+                f"✅ Теперь введите /report для формирования отчетности"
             )
         
         else:
@@ -195,10 +210,18 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Шаблон декларации не найден: {decl_template}")
             return
         
-        # Используем данные из выписок, если есть
+        # Используем данные из выписок
         inn = session.inn if session.inn else "632312967829"
         fio = session.fio if session.fio else "Леонтьев Артём Владиславович"
         oktmo = session.oktmo if session.oktmo else "36701320"
+        ip_accounts = session.ip_accounts if session.ip_accounts else []
+        
+        # Если нет счетов, добавляем по умолчанию из известных выписок
+        if not ip_accounts:
+            ip_accounts = [
+                {'number': '40802810000000009773', 'bank': 'ООО "ВБ Банк"', 'bik': '044525450'},
+                {'number': '40802810100000851604', 'bank': 'ООО "ОЗОН БАНК"', 'bik': '044525068'},
+            ]
         
         # Генерируем отчетность
         kudir_path, decl_excel, decl_xml, total_income, tax_payable = generate_report(
@@ -210,7 +233,8 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             decl_template,
             inn,
             fio,
-            oktmo
+            oktmo,
+            ip_accounts
         )
         
         await update.message.reply_text(

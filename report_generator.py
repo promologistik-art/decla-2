@@ -3,70 +3,75 @@ from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string
 
+IP_INN = "632312967829"
+IP_FIO = "Леонтьев Артём Владиславович"
+IP_OKTMO = "36701320"
+
 def format_currency(amount):
     if amount == int(amount):
         return int(amount)
     return round(amount, 2)
 
 def safe_write(ws, row, col, value):
-    """
-    Безопасная запись в ячейку с учетом объединенных ячеек
-    openpyxl не позволяет писать в объединенные ячейки, нужно писать в левую верхнюю
-    """
-    # Если значение None или пустая строка, просто возвращаем
-    if value is None:
-        return
-    
-    # Пробуем записать напрямую
-    try:
-        cell = ws.cell(row=row, column=col)
-        cell.value = value
-        return
-    except AttributeError:
-        pass
-    except Exception:
-        pass
-    
-    # Если не получилось, ищем левую верхнюю ячейку объединенного диапазона
-    for merged_range in ws.merged_cells.ranges:
-        if merged_range.min_row <= row <= merged_range.max_row and \
-           merged_range.min_col <= col <= merged_range.max_col:
-            # Нашли объединенный диапазон, пишем в левую верхнюю ячейку
-            top_left = ws.cell(row=merged_range.min_row, column=merged_range.min_col)
-            top_left.value = value
-            return
-    
-    # Если не нашли объединение, пробуем еще раз напрямую
+    """Безопасная запись в ячейку с учетом объединенных ячеек"""
     try:
         ws.cell(row=row, column=col).value = value
-    except:
-        pass
+    except AttributeError:
+        for merged in ws.merged_cells.ranges:
+            if merged.min_row <= row <= merged.max_row and merged.min_col <= col <= merged.max_col:
+                ws.cell(row=merged.min_row, column=merged.min_col).value = value
+                return
+        raise
+
+def write_inn_digit_by_digit(ws, start_row, start_col, inn):
+    """Записывает ИНН по одной цифре в ячейку"""
+    inn_str = str(inn)
+    for i, digit in enumerate(inn_str):
+        if digit.isdigit():
+            safe_write(ws, start_row, start_col + i, int(digit))
 
 
-def fill_kudir_template(operations, template_path, output_path, inn, fio, year=2025):
-    """Заполнение шаблона КУДиР"""
+def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_accounts, year=2025):
+    """
+    Заполнение шаблона КУДиР
+    
+    ip_accounts: список словарей с ключами 'number', 'bank', 'bik'
+    """
     wb = load_workbook(template_path)
     
-    # Лист 1 (титульный)
+    # ========== ЛИСТ 1 (ТИТУЛЬНЫЙ) ==========
     ws1 = wb["Лист1"]
     
-    # Год (AD13:AE13) - пишем в левую верхнюю (AD13)
-    safe_write(ws1, 13, column_index_from_string('AD'), year)
+    # Год (H15) — последние 2 цифры, "20" уже есть в шаблоне
+    year_last_two = year % 100
+    safe_write(ws1, 15, column_index_from_string('H'), year_last_two)
     
-    # ФИО (D15:D16)
-    fio_parts = fio.split()
-    if len(fio_parts) >= 1:
-        safe_write(ws1, 15, 4, fio_parts[0])  # фамилия
-    if len(fio_parts) >= 2:
-        safe_write(ws1, 16, 4, fio_parts[1] + (" " + fio_parts[2] if len(fio_parts) > 2 else ""))
+    # ФИО (V18)
+    safe_write(ws1, 18, column_index_from_string('V'), fio)
     
-    # ИНН (D20:D21)
-    safe_write(ws1, 20, 4, inn)
+    # ИНН (A28:AA28) — по одной цифре в ячейку
+    write_inn_digit_by_digit(ws1, 28, 1, inn)
     
-    # Объект налогообложения (D27:D28)
-    safe_write(ws1, 27, 4, "Доходы")
+    # Форма по ОКУД (BB14)
+    safe_write(ws1, 14, column_index_from_string('BB'), 1151085)
     
-    # Сортируем операции
+    # Дата заполнения (BB15, BG15, BJ15)
+    today = datetime.now()
+    safe_write(ws1, 15, column_index_from_string('BB'), today.year)
+    safe_write(ws1, 15, column_index_from_string('BG'), today.month)
+    safe_write(ws1, 15, column_index_from_string('BJ'), today.day)
+    
+    # Объект налогообложения (P30)
+    safe_write(ws1, 30, column_index_from_string('P'), "Доходы")
+    
+    # Счета ИП (A38, A40, A42, A44...)
+    row = 38
+    for acc in ip_accounts:
+        account_text = f"{acc['number']} {acc['bank']} БИК {acc['bik']}"
+        safe_write(ws1, row, 1, account_text)
+        row += 2
+    
+    # ========== ПОДГОТОВКА ДАННЫХ ==========
     sorted_ops = sorted(operations, key=lambda x: x['date'])
     total_income = sum(op['amount'] for op in sorted_ops)
     
@@ -75,73 +80,80 @@ def fill_kudir_template(operations, template_path, output_path, inn, fio, year=2
         quarter = (op['date'].month - 1) // 3 + 1
         quarterly_totals[quarter] += op['amount']
     
-    # Лист 2 (доходы I-II квартал)
+    # ========== ЛИСТ 2 (ДОХОДЫ I-II КВАРТАЛ) ==========
     ws2 = wb["Лист2"]
     
-    # Очищаем старые данные в таблице (строки 14-200)
-    for row in range(14, 200):
-        for col in range(1, 6):
-            ws2.cell(row=row, column=col).value = None
+    # Очищаем старые данные (строки 10-200)
+    for row in range(10, 200):
+        ws2.cell(row=row, column=1).value = None   # A - № п/п
+        ws2.cell(row=row, column=5).value = None   # E - дата и номер документа
+        ws2.cell(row=row, column=9).value = None   # I - содержание операции
+        ws2.cell(row=row, column=39).value = None  # AM - доходы
+        ws2.cell(row=row, column=43).value = None  # AQ - расходы
     
     # Заполняем операции за I и II кварталы
-    row = 14
+    row = 10
     for op in sorted_ops:
         quarter = (op['date'].month - 1) // 3 + 1
         if quarter <= 2:
-            safe_write(ws2, row, 1, row - 13)
-            safe_write(ws2, row, 2, op['document'])
-            safe_write(ws2, row, 3, op['purpose'][:150])
-            safe_write(ws2, row, 4, format_currency(op['amount']))
+            safe_write(ws2, row, 1, row - 9)                # A - № п/п
+            safe_write(ws2, row, 5, op['document'])         # E - дата и номер документа
+            safe_write(ws2, row, 9, op['purpose'][:150])    # I - содержание операции
+            safe_write(ws2, row, 39, format_currency(op['amount']))  # AM - доходы
+            # AQ - расходы оставляем пустыми
             row += 1
     
     # Итоги на Лист2
-    for r in range(14, 100):
+    for r in range(10, 100):
         cell_val = ws2.cell(row=r, column=1).value
         if cell_val and isinstance(cell_val, str):
             if "Итого за I квартал" in cell_val:
-                safe_write(ws2, r, 4, format_currency(quarterly_totals[1]))
+                safe_write(ws2, r, 39, format_currency(quarterly_totals[1]))
             elif "Итого за II квартал" in cell_val:
-                safe_write(ws2, r, 4, format_currency(quarterly_totals[2]))
+                safe_write(ws2, r, 39, format_currency(quarterly_totals[2]))
             elif "Итого за полугодие" in cell_val:
-                safe_write(ws2, r, 4, format_currency(quarterly_totals[1] + quarterly_totals[2]))
+                safe_write(ws2, r, 39, format_currency(quarterly_totals[1] + quarterly_totals[2]))
     
-    # Лист 3 (доходы III-IV квартал)
+    # ========== ЛИСТ 3 (ДОХОДЫ III-IV КВАРТАЛ) ==========
     ws3 = wb["Лист3"]
     
     # Очищаем старые данные
-    for row in range(14, 200):
-        for col in range(1, 6):
-            ws3.cell(row=row, column=col).value = None
+    for row in range(10, 200):
+        ws3.cell(row=row, column=1).value = None   # A
+        ws3.cell(row=row, column=5).value = None   # E
+        ws3.cell(row=row, column=9).value = None   # I
+        ws3.cell(row=row, column=39).value = None  # AM
+        ws3.cell(row=row, column=43).value = None  # AQ
     
     # Заполняем операции за III и IV кварталы
-    row = 14
+    row = 10
     for op in sorted_ops:
         quarter = (op['date'].month - 1) // 3 + 1
         if quarter >= 3:
-            safe_write(ws3, row, 1, row - 13)
-            safe_write(ws3, row, 2, op['document'])
-            safe_write(ws3, row, 3, op['purpose'][:150])
-            safe_write(ws3, row, 4, format_currency(op['amount']))
+            safe_write(ws3, row, 1, row - 9)
+            safe_write(ws3, row, 5, op['document'])
+            safe_write(ws3, row, 9, op['purpose'][:150])
+            safe_write(ws3, row, 39, format_currency(op['amount']))
             row += 1
     
     # Итоги на Лист3
-    for r in range(14, 100):
+    for r in range(10, 100):
         cell_val = ws3.cell(row=r, column=1).value
         if cell_val and isinstance(cell_val, str):
             if "Итого за III квартал" in cell_val:
-                safe_write(ws3, r, 4, format_currency(quarterly_totals[3]))
+                safe_write(ws3, r, 39, format_currency(quarterly_totals[3]))
             elif "Итого за 9 месяцев" in cell_val:
-                safe_write(ws3, r, 4, format_currency(quarterly_totals[1] + quarterly_totals[2] + quarterly_totals[3]))
+                safe_write(ws3, r, 39, format_currency(quarterly_totals[1] + quarterly_totals[2] + quarterly_totals[3]))
             elif "Итого за IV квартал" in cell_val:
-                safe_write(ws3, r, 4, format_currency(quarterly_totals[4]))
+                safe_write(ws3, r, 39, format_currency(quarterly_totals[4]))
             elif "Итого за год" in cell_val:
-                safe_write(ws3, r, 4, format_currency(total_income))
+                safe_write(ws3, r, 39, format_currency(total_income))
             elif cell_val.strip() == "010":
-                safe_write(ws3, r, 4, format_currency(total_income))
+                safe_write(ws3, r, 39, format_currency(total_income))
             elif cell_val.strip() == "020":
-                safe_write(ws3, r, 4, 0)
+                safe_write(ws3, r, 39, 0)
             elif cell_val.strip() == "040":
-                safe_write(ws3, r, 4, format_currency(total_income))
+                safe_write(ws3, r, 39, format_currency(total_income))
     
     wb.save(output_path)
     return total_income
@@ -182,20 +194,20 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     wb = load_workbook(template_path)
     ws = wb["стр.1"]
     
-    # ИНН (AG7:AG8)
+    # ИНН (AG7)
     safe_write(ws, 7, column_index_from_string('AG'), inn)
     
-    # Отчетный год (BJ14:BK14)
+    # Отчетный год (BJ14)
     safe_write(ws, 14, column_index_from_string('BJ'), 2025)
     
-    # ФИО (ищем строку с фамилией)
-    for row in range(30, 50):
+    # ФИО (ищем строку с текстом "фамилия, имя, отчество физического лица")
+    for row in range(30, 60):
         cell_val = ws.cell(row=row, column=1).value
         if cell_val and isinstance(cell_val, str) and "фамилия" in cell_val.lower():
-            safe_write(ws, row+1, 1, fio)
+            safe_write(ws, row+1, 3, fio)
             break
     
-    # ОКВЭД (ищем строку)
+    # ОКВЭД (ищем строку с текстом "ОКВЭД")
     for row in range(30, 60):
         cell_val = ws.cell(row=row, column=1).value
         if cell_val and isinstance(cell_val, str) and "ОКВЭД" in cell_val:
@@ -296,10 +308,10 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     return tax_payable, total_income
 
 
-def generate_report(operations, ens_data, output_dir, user_id, kudir_template, decl_template, inn, fio, oktmo):
+def generate_report(operations, ens_data, output_dir, user_id, kudir_template, decl_template, inn, fio, oktmo, ip_accounts):
     """Генерация отчетности"""
     kudir_path = os.path.join(output_dir, f"kudir_{user_id}.xlsx")
-    total_income = fill_kudir_template(operations, kudir_template, kudir_path, inn, fio)
+    total_income = fill_kudir_template(operations, kudir_template, kudir_path, inn, fio, ip_accounts)
     
     decl_excel = os.path.join(output_dir, f"declaration_{user_id}.xlsx")
     decl_xml = os.path.join(output_dir, f"declaration_{user_id}.xml")

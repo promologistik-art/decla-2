@@ -184,7 +184,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Пути к шаблонам
         kudir_template = os.path.join(TEMPLATES_DIR, "KUDIR_template.xlsx")
-        decl_template = os.path.join(TEMPLATES_DIR, "Declaration_template.xls")
+        decl_template = os.path.join(TEMPLATES_DIR, "Declaration_template.xlsx")
         
         # Проверяем наличие шаблонов
         if not os.path.exists(kudir_template):

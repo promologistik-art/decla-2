@@ -19,7 +19,7 @@ def parse_date(val):
         return val.to_pydatetime()
     if isinstance(val, str):
         val = val.strip()
-        formats = ["%d.%m.%Y", "%Y-%m-%d", "%d.%m.%Y %H:%M:%S"]
+        formats = ["%d.%m.%Y", "%Y-%m-%d", "%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M"]
         for fmt in formats:
             try:
                 return datetime.strptime(val, fmt)
@@ -27,27 +27,57 @@ def parse_date(val):
                 continue
     return None
 
-def is_income(text):
-    """Доход — всё, кроме переводов себе, комиссий и возвратов"""
-    text = str(text).lower()
+def extract_ip_data(df):
+    """Извлекает ИНН и ФИО из выписки"""
+    inn = ""
+    fio = ""
     
-    # Не доход
-    exclude = [
-        "собственных средств", "перевод собственных", "вывод собственных",
-        "комиссия", "возврат"
-    ]
-    for w in exclude:
-        if w in text:
-            return False
+    for idx, row in df.iterrows():
+        for col in range(len(row)):
+            val = str(row.iloc[col]) if pd.notna(row.iloc[col]) else ""
+            val_lower = val.lower()
+            
+            # Ищем ИНН
+            if "инн" in val_lower and not inn:
+                # ИНН может быть в соседней колонке
+                if col + 1 < len(row) and pd.notna(row.iloc[col + 1]):
+                    inn_candidate = str(row.iloc[col + 1]).strip()
+                    if inn_candidate.isdigit() and len(inn_candidate) >= 10:
+                        inn = inn_candidate
+                # Или в текущей колонке после ":"
+                if ":" in val:
+                    parts = val.split(":")
+                    if len(parts) > 1:
+                        inn_candidate = parts[1].strip()
+                        if inn_candidate.isdigit() and len(inn_candidate) >= 10:
+                            inn = inn_candidate
+            
+            # Ищем ФИО
+            if "клиент:" in val_lower or "индивидуальный предприниматель" in val_lower:
+                # ФИО в текущей колонке
+                if "ип" in val_lower:
+                    fio = val.replace("ИП", "").strip()
+                else:
+                    fio = val.split(":", 1)[-1].strip() if ":" in val else val
+                # Проверяем, есть ли ФИО в соседней колонке
+                if col + 1 < len(row) and pd.notna(row.iloc[col + 1]):
+                    fio_candidate = str(row.iloc[col + 1]).strip()
+                    if len(fio_candidate) > 10:
+                        fio = fio_candidate
     
-    # Всё остальное — доход
-    return True
+    # Очищаем ФИО
+    fio = fio.replace("ИП", "").replace("индивидуальный предприниматель", "").strip()
+    
+    return inn, fio
 
 def parse_bank_statement(file_path):
-    """Парсинг выписки: ищем колонку 'Кредит' или 'По кредиту'"""
+    """Парсинг выписки: извлекаем доходы и данные ИП"""
     df = pd.read_excel(file_path, header=None)
     
-    # 1. Находим строку с заголовками (где есть "кредит")
+    # Извлекаем данные ИП
+    ip_inn, ip_fio = extract_ip_data(df)
+    
+    # Находим строку с заголовками (где есть "кредит")
     header_row = None
     credit_col = None
     date_col = None
@@ -77,10 +107,10 @@ def parse_bank_statement(file_path):
     if header_row is None:
         raise Exception("Не найдена колонка 'Кредит'")
     
-    # 2. Берем данные после заголовка
+    # Берем данные после заголовка
     df_data = df.iloc[header_row + 1:].reset_index(drop=True)
     
-    # 3. Если не нашли колонку с датой, ищем первую колонку с датами
+    # Если не нашли колонку с датой, ищем первую колонку с датами
     if date_col is None:
         for col in range(len(df_data.columns)):
             for row in range(min(5, len(df_data))):
@@ -95,7 +125,7 @@ def parse_bank_statement(file_path):
             if date_col is not None:
                 break
     
-    # 4. Если не нашли колонку с назначением, берем последнюю
+    # Если не нашли колонку с назначением, берем последнюю
     if purpose_col is None:
         purpose_col = len(df_data.columns) - 1
     
@@ -113,7 +143,9 @@ def parse_bank_statement(file_path):
                 continue
             
             # Дата
-            date_val = row.iloc[date_col] if date_col < len(row) else None
+            if date_col is None or date_col >= len(row):
+                continue
+            date_val = row.iloc[date_col]
             if pd.isna(date_val):
                 continue
             date = parse_date(date_val)
@@ -127,20 +159,29 @@ def parse_bank_statement(file_path):
                 if pd.notna(purpose_val):
                     purpose = str(purpose_val)
             
-            # Исключаем строки с "Итого"
+            # Пропускаем строки "Итого"
             if "итого" in purpose.lower():
                 continue
             
-            # Если доход
-            if is_income(purpose):
-                operations.append({
-                    'date': date,
-                    'amount': amount,
-                    'purpose': purpose[:200],
-                    'document': f"{date.strftime('%d.%m.%Y')} оп.{idx+1}"
-                })
-                
+            # Исключаем переводы себе
+            if any(word in purpose.lower() for word in ["собственных средств", "перевод собственных", "вывод собственных"]):
+                continue
+            
+            # Номер документа (ищем в первых колонках)
+            doc_num = ""
+            for col in range(min(5, len(row))):
+                doc_val = str(row.iloc[col]) if pd.notna(row.iloc[col]) else ""
+                if doc_val and doc_val != "nan" and not doc_val.replace('.', '').isdigit():
+                    doc_num = doc_val
+                    break
+            
+            operations.append({
+                'date': date,
+                'amount': amount,
+                'purpose': purpose[:200],
+                'document': f"{date.strftime('%d.%m.%Y')} {doc_num}" if doc_num else f"{date.strftime('%d.%m.%Y')} оп.{idx+1}"
+            })
         except Exception as e:
             continue
     
-    return operations
+    return operations, ip_inn, ip_fio

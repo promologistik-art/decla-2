@@ -24,6 +24,7 @@ def parse_date(val):
     return None
 
 def parse_ens_statement(file_path):
+    """Парсинг CSV выписки ЕНС"""
     df = None
     for sep in [';', ',']:
         try:
@@ -47,13 +48,16 @@ def parse_ens_statement(file_path):
         'insurance_accrued': 0.0,
         'insurance_paid': 0.0,
         'insurance_paid_dates': [],
-        'penalties': 0.0
+        'penalties': 0.0,
+        'oktmo': ''
     }
     
+    # Ищем колонки
     col_op = None
     col_amount = None
     col_date = None
     col_kbk = None
+    col_oktmo = None
     
     for col in df.columns:
         if 'операции' in col:
@@ -64,6 +68,8 @@ def parse_ens_statement(file_path):
             col_date = col
         elif 'кбк' in col:
             col_kbk = col
+        elif 'октмо' in col:
+            col_oktmo = col
     
     if col_op is None:
         col_op = df.columns[0]
@@ -71,6 +77,14 @@ def parse_ens_statement(file_path):
         for col in df.columns:
             if df[col].dtype in ['float64', 'int64']:
                 col_amount = col
+                break
+    
+    # Ищем ОКТМО в данных
+    for _, row in df.iterrows():
+        if col_oktmo:
+            oktmo_val = row.get(col_oktmo)
+            if pd.notna(oktmo_val) and str(oktmo_val).strip():
+                result['oktmo'] = str(oktmo_val).strip()
                 break
     
     for _, row in df.iterrows():

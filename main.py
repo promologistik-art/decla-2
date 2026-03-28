@@ -18,7 +18,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
 DATA_DIR = "data"
 OUTPUT_DIR = "output"
-TEMPLATES_DIR = "templates"  # <-- ДОБАВЛЯЕМ ЭТУ СТРОКУ
+TEMPLATES_DIR = "templates"
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
@@ -37,13 +37,23 @@ class UserSession:
             'penalties': 0
         }
         self.ens_loaded = False
+        self.inn = ""      # ИНН из выписки
+        self.fio = ""      # ФИО из выписки
+        self.oktmo = ""    # ОКТМО из ЕНС
 
-    def add_bank_operations(self, operations):
+    def add_bank_operations(self, operations, inn="", fio=""):
         self.bank_operations.extend(operations)
+        if inn and not self.inn:
+            self.inn = inn
+        if fio and not self.fio:
+            self.fio = fio
 
     def set_ens_data(self, data):
         self.ens_data = data
         self.ens_loaded = True
+        # Извлекаем ОКТМО из данных ЕНС
+        if 'oktmo' in data and data['oktmo']:
+            self.oktmo = data['oktmo']
 
     def reset(self):
         self.bank_operations = []
@@ -54,6 +64,9 @@ class UserSession:
             'penalties': 0
         }
         self.ens_loaded = False
+        self.inn = ""
+        self.fio = ""
+        self.oktmo = ""
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -91,17 +104,21 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if filename.endswith(('.xlsx', '.xls')):
             await update.message.reply_text("📥 Обрабатываю выписку из банка...")
-            operations = parse_bank_statement(tmp_path)
+            operations, inn, fio = parse_bank_statement(tmp_path)
             
             if operations:
-                session.add_bank_operations(operations)
+                session.add_bank_operations(operations, inn, fio)
                 total = sum(op['amount'] for op in operations)
                 total_all = sum(op['amount'] for op in session.bank_operations)
-                await update.message.reply_text(
-                    f"✅ Найдено {len(operations)} операций\n"
-                    f"💰 Сумма в файле: {total:,.2f} ₽\n"
-                    f"📊 Всего загружено: {len(session.bank_operations)} операций на {total_all:,.2f} ₽"
-                )
+                
+                msg = f"✅ Найдено {len(operations)} операций\n💰 Сумма в файле: {total:,.2f} ₽\n📊 Всего загружено: {len(session.bank_operations)} операций на {total_all:,.2f} ₽"
+                
+                if inn:
+                    msg += f"\n🏢 ИНН: {inn}"
+                if fio:
+                    msg += f"\n👤 ИП: {fio}"
+                
+                await update.message.reply_text(msg)
             else:
                 await update.message.reply_text("⚠️ В выписке не найдено доходов")
         
@@ -111,6 +128,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             session.set_ens_data(ens_data)
             
             paid_in_2025 = any(d.year == 2025 for d in ens_data['insurance_paid_dates'])
+            oktmo = ens_data.get('oktmo', '')
             
             await update.message.reply_text(
                 f"✅ Выписка ЕНС обработана!\n\n"
@@ -118,7 +136,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"• Начислено: {ens_data['insurance_accrued']:,.2f} ₽\n"
                 f"• Уплачено: {ens_data['insurance_paid']:,.2f} ₽\n"
                 f"• Уплачено в 2025: {'Да' if paid_in_2025 else 'Нет'}\n"
-                f"• Пени: {ens_data['penalties']:,.2f} ₽\n\n"
+                f"• Пени: {ens_data['penalties']:,.2f} ₽\n"
+                f"• ОКТМО: {oktmo}\n\n"
                 f"✅ Теперь введите /report"
             )
         
@@ -165,7 +184,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Пути к шаблонам
         kudir_template = os.path.join(TEMPLATES_DIR, "KUDIR_template.xlsx")
-        decl_template = os.path.join(TEMPLATES_DIR, "Declaration_template.xlsx")
+        decl_template = os.path.join(TEMPLATES_DIR, "Declaration_template.xls")
         
         # Проверяем наличие шаблонов
         if not os.path.exists(kudir_template):
@@ -176,14 +195,22 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Шаблон декларации не найден: {decl_template}")
             return
         
-        # Вызов с 6 аргументами
+        # Используем данные из выписок, если есть
+        inn = session.inn if session.inn else "632312967829"
+        fio = session.fio if session.fio else "Леонтьев Артём Владиславович"
+        oktmo = session.oktmo if session.oktmo else "36701320"
+        
+        # Генерируем отчетность
         kudir_path, decl_excel, decl_xml, total_income, tax_payable = generate_report(
             all_ops, 
             session.ens_data, 
             OUTPUT_DIR, 
             user_id,
             kudir_template,
-            decl_template
+            decl_template,
+            inn,
+            fio,
+            oktmo
         )
         
         await update.message.reply_text(

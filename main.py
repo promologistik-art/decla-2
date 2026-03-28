@@ -18,8 +18,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
 DATA_DIR = "data"
 OUTPUT_DIR = "output"
+TEMPLATES_DIR = "templates"  # <-- ДОБАВЛЯЕМ ЭТУ СТРОКУ
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(TEMPLATES_DIR, exist_ok=True)
 
 user_sessions = {}
 
@@ -174,10 +176,14 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Шаблон декларации не найден: {decl_template}")
             return
         
-        # Генерируем отчетность
+        # Вызов с 6 аргументами
         kudir_path, decl_excel, decl_xml, total_income, tax_payable = generate_report(
-            all_ops, session.ens_data, OUTPUT_DIR, user_id,
-            kudir_template, decl_template
+            all_ops, 
+            session.ens_data, 
+            OUTPUT_DIR, 
+            user_id,
+            kudir_template,
+            decl_template
         )
         
         await update.message.reply_text(

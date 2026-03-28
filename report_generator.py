@@ -40,7 +40,7 @@ def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_acc
     
     # Год: в H15 уже есть "20", пишем "25" в I15 (левая верхняя объединения H15:J15)
     year_last_two = year % 100
-    safe_write(ws1, 15, column_index_from_string('I'), year_last_two)
+    safe_write(ws1, 15, column_index_from_string('H'), year_last_two)
     
     # ФИО (V18)
     safe_write(ws1, 18, column_index_from_string('V'), fio)

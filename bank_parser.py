@@ -37,135 +37,97 @@ def extract_ip_data(df):
             val = str(row.iloc[col]) if pd.notna(row.iloc[col]) else ""
             val_lower = val.lower()
             
-            # Ищем ФИО (ВБ Банк)
+            # ВБ Банк: "Индивидуальный предприниматель"
             if "индивидуальный предприниматель" in val_lower:
-                # Извлекаем ФИО
+                # ФИО — вся строка без служебных слов
                 fio = val.replace("Индивидуальный предприниматель", "").replace("ИП", "").strip()
-                # Проверяем соседние колонки
-                for c in range(max(0, col-2), min(len(row), col+3)):
-                    cell_val = str(row.iloc[c]) if pd.notna(row.iloc[c]) else ""
-                    if len(cell_val) > 20 and not any(x in cell_val for x in ["ИНН", "КПП", "Р/С"]):
-                        fio = cell_val.strip()
+                # Проверяем соседнюю колонку
+                if col + 1 < len(row) and pd.notna(row.iloc[col + 1]):
+                    fio_candidate = str(row.iloc[col + 1]).strip()
+                    if len(fio_candidate) > 10:
+                        fio = fio_candidate
                 
-                # Ищем ИНН в этой же строке
-                for c in range(len(row)):
-                    cell_val = str(row.iloc[c]) if pd.notna(row.iloc[c]) else ""
-                    if "инн" in cell_val.lower():
-                        if ":" in cell_val:
-                            parts = cell_val.split(":")
-                            if len(parts) > 1:
-                                inn_candidate = parts[1].strip()
-                                if inn_candidate.isdigit() and len(inn_candidate) >= 10:
+                # Ищем ИНН в следующих строках
+                for r in range(idx, min(idx + 5, len(df))):
+                    for c in range(len(df.iloc[r])):
+                        cell = str(df.iloc[r, c]) if pd.notna(df.iloc[r, c]) else ""
+                        if "инн" in cell.lower():
+                            # Ищем цифры после "ИНН"
+                            if ":" in cell:
+                                parts = cell.split(":")
+                                if len(parts) > 1:
+                                    inn_candidate = ''.join(ch for ch in parts[1] if ch.isdigit())
+                                    if len(inn_candidate) == 12:
+                                        inn = inn_candidate
+                            # Ищем в соседней ячейке
+                            elif c + 1 < len(df.iloc[r]) and pd.notna(df.iloc[r, c + 1]):
+                                inn_candidate = ''.join(ch for ch in str(df.iloc[r, c + 1]) if ch.isdigit())
+                                if len(inn_candidate) == 12:
                                     inn = inn_candidate
-                        elif c + 1 < len(row) and pd.notna(row.iloc[c + 1]):
-                            inn_candidate = str(row.iloc[c + 1]).strip()
-                            if inn_candidate.isdigit() and len(inn_candidate) >= 10:
-                                inn = inn_candidate
                 break
             
-            # Для выписок ОЗОН Банк
+            # ОЗОН Банк: "Клиент:"
             if "клиент:" in val_lower:
                 fio = val.replace("Клиент:", "").replace("ИП", "").strip()
                 # Ищем ИНН в следующих строках
-                if idx + 1 < len(df):
-                    next_row = df.iloc[idx + 1]
-                    for c in range(len(next_row)):
-                        cell_val = str(next_row.iloc[c]) if pd.notna(next_row.iloc[c]) else ""
-                        if "инн:" in cell_val.lower():
-                            inn_candidate = cell_val.replace("ИНН:", "").strip()
-                            if inn_candidate.isdigit() and len(inn_candidate) >= 10:
+                for r in range(idx, min(idx + 3, len(df))):
+                    for c in range(len(df.iloc[r])):
+                        cell = str(df.iloc[r, c]) if pd.notna(df.iloc[r, c]) else ""
+                        if "инн:" in cell.lower():
+                            inn_candidate = ''.join(ch for ch in cell.replace("ИНН:", "") if ch.isdigit())
+                            if len(inn_candidate) == 12:
                                 inn = inn_candidate
-                                break
                 break
     
     # Очищаем ФИО
     fio = fio.replace("Р/С:", "").replace("БИК:", "").strip()
     fio = ' '.join(fio.split())
     
-    # Если ФИО не найдено, пытаемся извлечь из названия ИП
-    if not fio:
-        for idx, row in df.iterrows():
-            for col in range(len(row)):
-                val = str(row.iloc[col]) if pd.notna(row.iloc[col]) else ""
-                if "ИП" in val and len(val) > 10:
-                    fio = val.replace("ИП", "").strip()
-                    break
-            if fio:
-                break
-    
     return inn, fio
 
-def extract_ip_accounts(df, ip_inn):
-    """Извлекает счета ИП из выписки (только счета, принадлежащие ИП)"""
+def extract_ip_accounts(df):
+    """Извлекает счета ИП из выписки (только по строке "Счет:")"""
     accounts = []
     seen_numbers = set()
-    
-    # Ищем строку с номером счета ИП по ИНН
-    ip_account_number = ""
-    bank = ""
-    bik = ""
     
     for idx, row in df.iterrows():
         for col in range(len(row)):
             val = str(row.iloc[col]) if pd.notna(row.iloc[col]) else ""
-            # Ищем по ИНН
-            if ip_inn and ip_inn in val:
-                # Проверяем соседние колонки на номер счета
-                for c in range(max(0, col-5), min(len(row), col+5)):
-                    cell_val = str(row.iloc[c]) if pd.notna(row.iloc[c]) else ""
-                    if "40802" in cell_val and len(cell_val) >= 20:
-                        ip_account_number = ''.join(ch for ch in cell_val if ch.isdigit())
-                        # Ищем банк и БИК
-                        for r in range(max(0, idx-3), min(len(df), idx+4)):
-                            for bc in range(max(0, c-5), min(len(row), c+8)):
-                                bank_val = str(df.iloc[r, bc]) if pd.notna(df.iloc[r, bc]) else ""
-                                if "БИК" in bank_val:
-                                    bik = ''.join(ch for ch in bank_val if ch.isdigit())
-                                    if len(bik) == 9:
-                                        bik = bik
-                                if any(x in bank_val for x in ["Банк", "БАНК", "ООО", "АО", "ПАО"]):
-                                    if len(bank_val) > 3 and len(bank_val) < 100 and "БИК" not in bank_val:
-                                        bank = bank_val.strip()
-                        break
+            # Ищем строку "Счет:"
+            if "счет:" in val.lower():
+                # Номер счета может быть в этой же ячейке после ":"
+                if ":" in val:
+                    account_number = ''.join(ch for ch in val.split(":")[-1] if ch.isdigit())
+                # Или в соседней ячейке
+                elif col + 1 < len(row) and pd.notna(row.iloc[col + 1]):
+                    account_number = ''.join(ch for ch in str(row.iloc[col + 1]) if ch.isdigit())
+                else:
+                    continue
+                
+                # Ищем банк и БИК
+                bank = ""
+                bik = ""
+                
+                # Проверяем строку счета и соседние
+                for r in range(max(0, idx-2), min(len(df), idx+3)):
+                    for c in range(max(0, col-5), min(len(row), col+8)):
+                        cell = str(df.iloc[r, c]) if pd.notna(df.iloc[r, c]) else ""
+                        if "бик" in cell.lower():
+                            bik = ''.join(ch for ch in cell if ch.isdigit())
+                            if len(bik) == 9:
+                                bik = bik
+                        if any(x in cell for x in ["Банк", "БАНК", "ООО", "АО", "ПАО"]):
+                            if len(cell) > 3 and len(cell) < 100 and "БИК" not in cell:
+                                bank = cell.strip()
+                
+                if account_number and account_number not in seen_numbers and len(account_number) >= 20:
+                    accounts.append({
+                        'number': account_number,
+                        'bank': bank,
+                        'bik': bik
+                    })
+                    seen_numbers.add(account_number)
                 break
-        if ip_account_number:
-            break
-    
-    # Если не нашли по ИНН, ищем по строке "Счет:"
-    if not ip_account_number:
-        for idx, row in df.iterrows():
-            for col in range(len(row)):
-                val = str(row.iloc[col]) if pd.notna(row.iloc[col]) else ""
-                if "счет:" in val.lower():
-                    for c in range(max(0, col-2), min(len(row), col+3)):
-                        cell_val = str(row.iloc[c]) if pd.notna(row.iloc[c]) else ""
-                        if "40802" in cell_val and len(cell_val) >= 20:
-                            ip_account_number = ''.join(ch for ch in cell_val if ch.isdigit())
-                            # Ищем банк и БИК
-                            for r in range(max(0, idx-3), min(len(df), idx+4)):
-                                for bc in range(max(0, c-5), min(len(row), c+8)):
-                                    bank_val = str(df.iloc[r, bc]) if pd.notna(df.iloc[r, bc]) else ""
-                                    if "БИК" in bank_val:
-                                        bik = ''.join(ch for ch in bank_val if ch.isdigit())
-                                        if len(bik) == 9:
-                                            bik = bik
-                                    if any(x in bank_val for x in ["Банк", "БАНК", "ООО", "АО", "ПАО"]):
-                                        if len(bank_val) > 3 and len(bank_val) < 100 and "БИК" not in bank_val:
-                                            bank = bank_val.strip()
-                            break
-                if ip_account_number:
-                    break
-            if ip_account_number:
-                break
-    
-    # Добавляем найденный счет
-    if ip_account_number and ip_account_number not in seen_numbers:
-        accounts.append({
-            'number': ip_account_number,
-            'bank': bank,
-            'bik': bik
-        })
-        seen_numbers.add(ip_account_number)
     
     return accounts
 
@@ -177,7 +139,7 @@ def parse_bank_statement(file_path):
     ip_inn, ip_fio = extract_ip_data(df)
     
     # Извлекаем счета ИП
-    ip_accounts = extract_ip_accounts(df, ip_inn)
+    ip_accounts = extract_ip_accounts(df)
     
     # Находим строку с заголовками (где есть "кредит")
     header_row = None

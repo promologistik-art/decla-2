@@ -34,22 +34,25 @@ class UserSession:
             'insurance_accrued': 0,
             'insurance_paid': 0,
             'insurance_paid_dates': [],
-            'penalties': 0
+            'penalties': 0,
+            'usn_payments': []
         }
         self.ens_loaded = False
         self.inn = ""
         self.fio = ""
         self.oktmo = ""
-        self.ip_accounts = []  # список счетов ИП
+        self.ip_accounts = []
+        self.okved = ""
+        self.phone = ""
+        self.awaiting_okved = False
+        self.awaiting_phone = False
 
     def add_bank_operations(self, operations, inn="", fio="", accounts=None):
         self.bank_operations.extend(operations)
-        # Обновляем ИНН и ФИО
         if inn and len(inn) >= 10 and inn.isdigit():
             self.inn = inn
         if fio and len(fio) > 10 and not any(x in fio for x in ["Р/С", "БИК", "ИНН"]):
             self.fio = fio
-        # Добавляем счета
         if accounts:
             for acc in accounts:
                 if acc['number'] not in [a['number'] for a in self.ip_accounts]:
@@ -67,13 +70,18 @@ class UserSession:
             'insurance_accrued': 0,
             'insurance_paid': 0,
             'insurance_paid_dates': [],
-            'penalties': 0
+            'penalties': 0,
+            'usn_payments': []
         }
         self.ens_loaded = False
         self.inn = ""
         self.fio = ""
         self.oktmo = ""
         self.ip_accounts = []
+        self.okved = ""
+        self.phone = ""
+        self.awaiting_okved = False
+        self.awaiting_phone = False
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -144,6 +152,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             paid_in_2025 = any(d.year == 2025 for d in ens_data['insurance_paid_dates'])
             oktmo = ens_data.get('oktmo', '')
+            usn_payments = ens_data.get('usn_payments', [])
             
             await update.message.reply_text(
                 f"✅ Выписка ЕНС обработана!\n\n"
@@ -152,7 +161,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"• Уплачено: {ens_data['insurance_paid']:,.2f} ₽\n"
                 f"• Уплачено в 2025: {'Да' if paid_in_2025 else 'Нет'}\n"
                 f"• Пени: {ens_data['penalties']:,.2f} ₽\n"
-                f"• ОКТМО: {oktmo}\n\n"
+                f"• ОКТМО: {oktmo}\n"
+                f"• Авансов по УСН: {len(usn_payments)} платеж(ей)\n\n"
                 f"✅ Теперь введите /report для формирования отчетности"
             )
         
@@ -184,6 +194,28 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Сначала загрузите выписку ЕНС")
         return
     
+    # Если нет ОКВЭД, спрашиваем
+    if not session.okved:
+        session.awaiting_okved = True
+        await update.message.reply_text(
+            "📝 Для заполнения декларации укажите код ОКВЭД\n"
+            "Например: *47.91* (торговля по почте/Интернет)\n\n"
+            "Введите код:",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # Если нет телефона, спрашиваем
+    if not session.phone:
+        session.awaiting_phone = True
+        await update.message.reply_text(
+            "📞 Укажите контактный телефон\n"
+            "Например: *89261234567*\n\n"
+            "Введите номер:",
+            parse_mode="Markdown"
+        )
+        return
+    
     await update.message.reply_text("🔄 Формирую отчетность...")
     
     try:
@@ -201,7 +233,6 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kudir_template = os.path.join(TEMPLATES_DIR, "KUDIR_template.xlsx")
         decl_template = os.path.join(TEMPLATES_DIR, "Declaration_template.xlsx")
         
-        # Проверяем наличие шаблонов
         if not os.path.exists(kudir_template):
             await update.message.reply_text(f"❌ Шаблон КУДиР не найден: {kudir_template}")
             return
@@ -210,13 +241,15 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Шаблон декларации не найден: {decl_template}")
             return
         
-        # Используем данные из выписок
+        # Данные
         inn = session.inn if session.inn else "632312967829"
         fio = session.fio if session.fio else "Леонтьев Артём Владиславович"
         oktmo = session.oktmo if session.oktmo else "36701320"
         ip_accounts = session.ip_accounts if session.ip_accounts else []
+        okved = session.okved
+        phone = session.phone
         
-        # Если нет счетов, добавляем по умолчанию из известных выписок
+        # Если нет счетов, добавляем по умолчанию
         if not ip_accounts:
             ip_accounts = [
                 {'number': '40802810000000009773', 'bank': 'ООО "ВБ Банк"', 'bik': '044525450'},
@@ -234,7 +267,9 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             inn,
             fio,
             oktmo,
-            ip_accounts
+            ip_accounts,
+            okved,
+            phone
         )
         
         await update.message.reply_text(
@@ -259,6 +294,33 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
         import traceback
         traceback.print_exc()
+
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка текстовых сообщений (ОКВЭД, телефон)"""
+    user_id = update.effective_user.id
+    
+    if user_id not in user_sessions:
+        await update.message.reply_text("Сначала загрузите выписки (/start)")
+        return
+    
+    session = user_sessions[user_id]
+    text = update.message.text.strip()
+    
+    # Ждем ОКВЭД
+    if session.awaiting_okved:
+        session.okved = text
+        session.awaiting_okved = False
+        await update.message.reply_text(f"✅ ОКВЭД сохранен: {text}\n\n📞 Теперь укажите контактный телефон:")
+        session.awaiting_phone = True
+        return
+    
+    # Ждем телефон
+    if session.awaiting_phone:
+        session.phone = text
+        session.awaiting_phone = False
+        await update.message.reply_text(f"✅ Телефон сохранен: {text}\n\n🔄 Введите /report для формирования отчетности")
+        return
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -293,6 +355,7 @@ def main():
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     print("🤖 Бот запущен...")
     app.run_polling()

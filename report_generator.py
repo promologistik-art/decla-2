@@ -59,99 +59,181 @@ def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_acc
 def write_inn_digit_by_digit_declaration(ws, inn):
     """Заполнение ИНН: колонки Y1, AA1, AC1, AE1, AG1, AI1, AK1, AM1, AO1, AQ1, AS1, AU1"""
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
-    # Колонки: Y(25), AA(27), AC(29), AE(31), AG(33), AI(35), AK(37), AM(39), AO(41), AQ(43), AS(45), AU(47)
     columns = [25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47]
     for i, digit in enumerate(inn_str):
         if i < len(columns):
             safe_write(ws, 1, columns[i], int(digit))
 
+def write_kpp_digit_by_digit_declaration(ws, kpp):
+    """Заполнение КПП для организации (для ИП не используется)"""
+    kpp_str = ''.join(ch for ch in str(kpp) if ch.isdigit())
+    columns = [25, 27, 29, 31, 33, 35, 37, 39, 41]
+    for i, digit in enumerate(kpp_str):
+        if i < len(columns):
+            safe_write(ws, 4, columns[i], int(digit))
+
 def write_tax_office_code(ws, inn):
-    """Заполнение кода налогового органа (первые 4 цифры ИНН)"""
+    """Заполнение кода налогового органа (первые 4 цифры ИНН) в ячейки AA13, AC13, AE13, AG13"""
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
-    tax_code = inn_str[:4]  # Первые 4 цифры ИНН - код налоговой
-    # Колонки: AA(27), AC(29), AE(31), AG(33)
-    columns = [27, 29, 31, 33]
+    tax_code = inn_str[:4]
+    columns = [27, 29, 31, 33]  # AA, AC, AE, AG
     for i, digit in enumerate(tax_code):
         if i < len(columns):
             safe_write(ws, 13, columns[i], int(digit))
 
-def write_phone_digit_by_digit(ws, phone):
-    """Заполнение телефона цифра за цифрой"""
-    phone_digits = ''.join(ch for ch in str(phone) if ch.isdigit())
-    # Телефон в строке 43, начиная с колонки AZ (52)
-    for i, digit in enumerate(phone_digits[:11]):
-        safe_write(ws, 43, 52 + i, int(digit))
+def write_place_of_registration_code(ws):
+    """Код по месту учета для ИП: 120 в ячейки BW13, BY13, CA13"""
+    # 1, 2, 0
+    safe_write(ws, 13, 75, 1)  # BW
+    safe_write(ws, 13, 77, 2)  # BY
+    safe_write(ws, 13, 79, 0)  # CA
 
-def write_okved_digit_by_digit(ws, okved):
-    okved_str = ''.join(ch for ch in str(okved) if ch.isdigit())
-    # ОКВЭД в строке 27, колонки: 74, 78, 86, 90, 98, 102
-    columns = [74, 78, 86, 90, 98, 102]
-    for i, digit in enumerate(okved_str):
-        if i < len(columns):
-            safe_write(ws, 27, columns[i], int(digit))
+def write_correction_number(ws):
+    """Номер корректировки в ячейку S11"""
+    safe_write(ws, 11, 19, 0)  # S = 19
 
-def write_year_digits(ws, year):
+def write_tax_period_code(ws):
+    """Налоговый период (код) 34 в ячейки BA11, BC11"""
+    safe_write(ws, 11, 53, 3)  # BA = 53
+    safe_write(ws, 11, 55, 4)  # BC = 55
+
+def write_report_year(ws, year):
+    """Отчетный год в ячейки BZ11, CB11, CD11, CF11 (2025)"""
     year_str = str(year)
-    # Год в строке 14, колонки: 114, 118, 122, 126
-    columns = [114, 118, 122, 126]
+    columns = [78, 80, 82, 84]  # BZ, CB, CD, CF
     for i, digit in enumerate(year_str):
         if i < len(columns):
-            safe_write(ws, 14, columns[i], int(digit))
+            safe_write(ws, 11, columns[i], int(digit))
+
+def write_legal_name_by_letters(ws, name):
+    """Заполнение полного названия юрлица по буквам с A15 через одну колонку до CA15, затем перенос на A17"""
+    name_clean = ''.join(ch for ch in name if ch.isalpha() or ch == ' ')
+    row = 15
+    col = 1  # A
+    for char in name_clean:
+        if char == ' ':
+            char = '_'
+        if col > 79:  # CA = 79
+            row = 17
+            col = 1
+        safe_write(ws, row, col, char.upper())
+        col += 2
+
+def write_phone_by_letters(ws, phone):
+    """Заполнение номера телефона с U27 через одну колонку"""
+    phone_digits = ''.join(ch for ch in str(phone) if ch.isdigit())
+    col = 21  # U
+    for digit in phone_digits[:11]:
+        safe_write(ws, 27, col, int(digit))
+        col += 2
+
+def write_last_name_by_letters(ws, last_name):
+    """Заполнение фамилии с B43 через одну колонку"""
+    col = 2  # B
+    for char in last_name.upper():
+        safe_write(ws, 43, col, char)
+        col += 2
+
+def write_first_name_by_letters(ws, first_name):
+    """Заполнение имени с B45 через одну колонку"""
+    col = 2  # B
+    for char in first_name.upper():
+        safe_write(ws, 45, col, char)
+        col += 2
+
+def write_patronymic_by_letters(ws, patronymic):
+    """Заполнение отчества с B47 через одну колонку"""
+    col = 2  # B
+    for char in patronymic.upper():
+        safe_write(ws, 47, col, char)
+        col += 2
+
+def write_signature_last_name(ws, last_name):
+    """Фамилия подписанта в ячейку H50"""
+    safe_write(ws, 50, 8, last_name.upper())  # H = 8
+
+def write_signature_date(ws):
+    """Дата подписи: день в V50, X50, месяц в AB50, AD50, год в AH50, AJ50, AL50, AN50"""
+    today = datetime.now()
+    day = str(today.day).zfill(2)
+    month = str(today.month).zfill(2)
+    year = str(today.year)
+    
+    # День: V50 (22), X50 (24)
+    safe_write(ws, 50, 22, int(day[0]))
+    safe_write(ws, 50, 24, int(day[1]))
+    
+    # Месяц: AB50 (28), AD50 (30)
+    safe_write(ws, 50, 28, int(month[0]))
+    safe_write(ws, 50, 30, int(month[1]))
+    
+    # Год: AH50 (34), AJ50 (36), AL50 (38), AN50 (40)
+    safe_write(ws, 50, 34, int(year[0]))
+    safe_write(ws, 50, 36, int(year[1]))
+    safe_write(ws, 50, 38, int(year[2]))
+    safe_write(ws, 50, 40, int(year[3]))
 
 def fill_declaration_template(operations, ens_data, template_path, output_excel, output_xml, inn, fio, oktmo, okved, phone):
     wb = load_workbook(template_path)
     
-    # Проверяем наличие листа "Титул"
     if "Титул" not in wb.sheetnames:
-        raise Exception(f"Лист 'Титул' не найден в шаблоне. Доступные листы: {wb.sheetnames}")
+        raise Exception(f"Лист 'Титул' не найден. Доступные листы: {wb.sheetnames}")
     
     ws = wb["Титул"]
     
-    # 1. ИНН (строки 1-2, колонки через одну)
+    # 1. ИНН
     write_inn_digit_by_digit_declaration(ws, inn)
     
-    # 2. КПП для ИП не заполняем
+    # 2. КПП - для ИП не заполняем (оставляем пустым)
     
-    # 3. Код налогового органа (строка 13, колонки AA, AC, AE, AG)
+    # 3. Код налогового органа (первые 4 цифры ИНН)
     write_tax_office_code(ws, inn)
     
-    # 4. По месту учета (код) - для ИП это 120 (строка 13, колонка AY = 51)
-    safe_write(ws, 13, 51, 1)  # сотня
-    safe_write(ws, 13, 52, 2)  # двадцать
-    safe_write(ws, 13, 53, 0)  # ноль
+    # 4. Код по месту учета 120
+    write_place_of_registration_code(ws)
     
-    # 5. Номер корректировки (0 - первичная) - строка 14, колонка 18 (R)
-    safe_write(ws, 14, 18, 0)
+    # 5. Номер корректировки 0 в S11
+    write_correction_number(ws)
     
-    # 6. Налоговый период (код) - 34 (год) - строка 14, колонки: 54, 58, 62, 66
-    safe_write(ws, 14, 54, 3)
-    safe_write(ws, 14, 58, 4)
+    # 6. Налоговый период 34 в BA11, BC11
+    write_tax_period_code(ws)
     
-    # 7. Отчетный год
-    write_year_digits(ws, 2025)
+    # 7. Отчетный год 2025
+    write_report_year(ws, 2025)
     
-    # 8. Телефон (строка 43, колонка AZ)
+    # 8. Название юрлица по буквам
+    write_legal_name_by_letters(ws, f"ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ {fio}")
+    
+    # 9. Телефон
     if phone:
-        write_phone_digit_by_digit(ws, phone)
+        write_phone_by_letters(ws, phone)
     
-    # 9. ФИО налогоплательщика (строка 20, колонка C)
-    safe_write(ws, 20, 3, fio)
+    # 10. Объект налогообложения (1 = доходы) в AJ20
+    safe_write(ws, 20, 36, 1)  # AJ = 36
     
-    # 10. ФИО в разделе подписи (строка 50, колонка U)
-    safe_write(ws, 50, 21, fio)
+    # 11. Разбор ФИО
+    fio_parts = fio.split()
+    last_name = fio_parts[0] if len(fio_parts) > 0 else ""
+    first_name = fio_parts[1] if len(fio_parts) > 1 else ""
+    patronymic = fio_parts[2] if len(fio_parts) > 2 else ""
     
-    # 11. Дата подписи (строка 50, колонки)
-    today = datetime.now()
-    safe_write(ws, 50, 58, today.day)
-    safe_write(ws, 50, 60, today.month)
-    safe_write(ws, 50, 64, today.year)
+    # 12. Фамилия по буквам
+    if last_name:
+        write_last_name_by_letters(ws, last_name)
     
-    # 12. ОКВЭД
-    if okved:
-        write_okved_digit_by_digit(ws, okved)
+    # 13. Имя по буквам
+    if first_name:
+        write_first_name_by_letters(ws, first_name)
     
-    # 13. Объект налогообложения (строка 20, колонка AJ = 36) - 1 = доходы
-    safe_write(ws, 20, 36, 1)
+    # 14. Отчество по буквам
+    if patronymic:
+        write_patronymic_by_letters(ws, patronymic)
+    
+    # 15. Фамилия подписанта в H50
+    write_signature_last_name(ws, last_name)
+    
+    # 16. Дата подписи
+    write_signature_date(ws)
     
     # Расчет доходов по кварталам
     quarterly = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
@@ -162,7 +244,6 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     total_income = sum(quarterly.values())
     tax_rate = 6
     
-    # Накопленные доходы
     cum_income = {
         1: quarterly[1],
         2: quarterly[1] + quarterly[2],
@@ -170,7 +251,6 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         4: total_income
     }
     
-    # Накопленный налог
     cum_tax = {i: cum_income[i] * tax_rate / 100 for i in range(1, 5)}
     
     # Авансовые платежи из ЕНС
@@ -186,76 +266,46 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
             elif month <= 9:
                 advance_payments[3] += payment['amount']
     
-    # Вычет по взносам (только уплаченные в 2025)
     paid_in_2025 = any(d.year == 2025 for d in ens_data.get('insurance_paid_dates', []))
     insurance_paid = ens_data.get('insurance_paid', 0) if paid_in_2025 else 0
-    
-    # Накопленный вычет (не более налога)
     cum_deductible = {i: min(cum_tax[i], insurance_paid) for i in range(1, 5)} if paid_in_2025 else {i: 0 for i in range(1, 5)}
     
-    # Налог к уплате
     tax_payable = max(0, cum_tax[4] - cum_deductible[4] - advance_payments[1] - advance_payments[2] - advance_payments[3])
     
     # Заполнение раздела 2.1.1
-    if "Раздел 2.1.1" not in wb.sheetnames:
-        raise Exception(f"Лист 'Раздел 2.1.1' не найден. Доступные листы: {wb.sheetnames}")
+    if "Раздел 2.1.1" in wb.sheetnames:
+        ws21 = wb["Раздел 2.1.1"]
+        safe_write(ws21, 34, 39, format_currency(cum_income[1]))
+        safe_write(ws21, 35, 39, format_currency(cum_income[2]))
+        safe_write(ws21, 36, 39, format_currency(cum_income[3]))
+        safe_write(ws21, 37, 39, format_currency(cum_income[4]))
+        safe_write(ws21, 41, 39, tax_rate)
+        safe_write(ws21, 42, 39, tax_rate)
+        safe_write(ws21, 43, 39, tax_rate)
+        safe_write(ws21, 44, 39, tax_rate)
+        safe_write(ws21, 50, 39, format_currency(cum_tax[1]))
+        safe_write(ws21, 51, 39, format_currency(cum_tax[2]))
+        safe_write(ws21, 52, 39, format_currency(cum_tax[3]))
+        safe_write(ws21, 53, 39, format_currency(cum_tax[4]))
     
-    ws21 = wb["Раздел 2.1.1"]
+    if "Раздел 2.1.1 (продолжение)" in wb.sheetnames:
+        ws21_cont = wb["Раздел 2.1.1 (продолжение)"]
+        safe_write(ws21_cont, 12, 39, format_currency(cum_deductible[1]))
+        safe_write(ws21_cont, 14, 39, format_currency(cum_deductible[2]))
+        safe_write(ws21_cont, 16, 39, format_currency(cum_deductible[3]))
+        safe_write(ws21_cont, 18, 39, format_currency(cum_deductible[4]))
     
-    # Доходы (строки 110-113)
-    safe_write(ws21, 34, 39, format_currency(cum_income[1]))   # стр 110
-    safe_write(ws21, 35, 39, format_currency(cum_income[2]))   # стр 111
-    safe_write(ws21, 36, 39, format_currency(cum_income[3]))   # стр 112
-    safe_write(ws21, 37, 39, format_currency(cum_income[4]))   # стр 113
+    if "Раздел 1.1" in wb.sheetnames:
+        ws11 = wb["Раздел 1.1"]
+        safe_write(ws11, 22, 39, oktmo)
+        safe_write(ws11, 28, 39, format_currency(advance_payments[1]))
+        safe_write(ws11, 38, 39, format_currency(advance_payments[2]))
+        safe_write(ws11, 54, 39, format_currency(advance_payments[3]))
+        safe_write(ws11, 70, 39, format_currency(tax_payable))
     
-    # Ставка (строки 120-123)
-    safe_write(ws21, 41, 39, tax_rate)   # стр 120
-    safe_write(ws21, 42, 39, tax_rate)   # стр 121
-    safe_write(ws21, 43, 39, tax_rate)   # стр 122
-    safe_write(ws21, 44, 39, tax_rate)   # стр 123
-    
-    # Исчисленный налог (строки 130-133)
-    safe_write(ws21, 50, 39, format_currency(cum_tax[1]))   # стр 130
-    safe_write(ws21, 51, 39, format_currency(cum_tax[2]))   # стр 131
-    safe_write(ws21, 52, 39, format_currency(cum_tax[3]))   # стр 132
-    safe_write(ws21, 53, 39, format_currency(cum_tax[4]))   # стр 133
-    
-    # Вычет по взносам (лист "Раздел 2.1.1 (продолжение)")
-    if "Раздел 2.1.1 (продолжение)" not in wb.sheetnames:
-        raise Exception(f"Лист 'Раздел 2.1.1 (продолжение)' не найден. Доступные листы: {wb.sheetnames}")
-    
-    ws21_cont = wb["Раздел 2.1.1 (продолжение)"]
-    safe_write(ws21_cont, 12, 39, format_currency(cum_deductible[1]))   # стр 140
-    safe_write(ws21_cont, 14, 39, format_currency(cum_deductible[2]))   # стр 141
-    safe_write(ws21_cont, 16, 39, format_currency(cum_deductible[3]))   # стр 142
-    safe_write(ws21_cont, 18, 39, format_currency(cum_deductible[4]))   # стр 143
-    
-    # Заполнение раздела 1.1
-    if "Раздел 1.1" not in wb.sheetnames:
-        raise Exception(f"Лист 'Раздел 1.1' не найден. Доступные листы: {wb.sheetnames}")
-    
-    ws11 = wb["Раздел 1.1"]
-    
-    # ОКТМО (строка 010) - берем из ЕНС или используем значение по умолчанию
-    safe_write(ws11, 22, 39, oktmo)
-    
-    # Авансовые платежи
-    safe_write(ws11, 28, 39, format_currency(advance_payments[1]))   # стр 020 (28 апреля)
-    safe_write(ws11, 38, 39, format_currency(advance_payments[2]))   # стр 040 (28 июля)
-    safe_write(ws11, 54, 39, format_currency(advance_payments[3]))   # стр 070 (28 октября)
-    
-    # Налог к уплате за год (стр 100)
-    safe_write(ws11, 70, 39, format_currency(tax_payable))
-    
-    # Сохраняем Excel
     wb.save(output_excel)
     
-    # Генерируем XML
-    fio_parts = fio.split()
-    last_name = fio_parts[0] if len(fio_parts) > 0 else ""
-    first_name = fio_parts[1] if len(fio_parts) > 1 else ""
-    patronymic = fio_parts[2] if len(fio_parts) > 2 else ""
-    
+    # XML
     xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Файл xmlns="urn:ФНС-СХД-Декл-УСН-2025-1">
     <Документ>

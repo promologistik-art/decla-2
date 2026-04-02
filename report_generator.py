@@ -3,7 +3,6 @@ import warnings
 from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string
-from openpyxl.styles import Font
 
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
@@ -13,42 +12,38 @@ def format_currency(amount):
     return round(amount, 2)
 
 def get_merge_start(ws, row, col):
-    """Возвращает координаты верхней левой ячейки объединения, если ячейка объединена"""
+    """Возвращает координаты верхней левой ячейки объединения"""
     for merged in ws.merged_cells.ranges:
         if merged.min_row <= row <= merged.max_row and merged.min_col <= col <= merged.max_col:
             return merged.min_row, merged.min_col
     return row, col
 
 def safe_write(ws, row, col, value, as_text=False):
-    """Безопасная запись с учетом объединенных ячеек"""
+    """Безопасная запись - НЕ меняем шрифт"""
     if value is None:
         return
-    # Находим главную ячейку объединения
     target_row, target_col = get_merge_start(ws, row, col)
     cell = ws.cell(row=target_row, column=target_col)
     if as_text and isinstance(value, (int, float)):
         cell.value = str(int(value))
     else:
         cell.value = value
-    cell.font = Font(name='Courier New')
 
 def write_digit(ws, row, col, digit):
-    """Запись одной цифры с учетом объединенных ячеек"""
+    """Запись цифры - НЕ меняем шрифт"""
     if digit is None:
         return
     target_row, target_col = get_merge_start(ws, row, col)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = str(int(digit))
-    cell.font = Font(name='Courier New')
 
 def write_letter(ws, row, col, letter):
-    """Запись одной буквы с учетом объединенных ячеек"""
+    """Запись буквы - НЕ меняем шрифт"""
     if not letter:
         return
     target_row, target_col = get_merge_start(ws, row, col)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = letter
-    cell.font = Font(name='Courier New')
 
 
 # ========== КУДиР ==========
@@ -95,7 +90,7 @@ def write_inn_digit_by_digit_declaration(ws, inn):
             write_digit(ws, 1, columns[i], int(digit))
 
 def write_tax_office_code(ws, inn):
-    """Код налогового органа (первые 4 цифры ИНН): AA13, AC13, AE13, AG13"""
+    """Код налогового органа: AA13, AC13, AE13, AG13"""
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
     tax_code = inn_str[:4]
     columns = [27, 29, 31, 33]
@@ -110,27 +105,27 @@ def write_place_of_registration_code(ws):
     write_digit(ws, 13, 79, 0)  # CA
 
 def write_correction_number(ws):
-    """Номер корректировки 0: S11 (колонка 19)"""
+    """Номер корректировки 0: S11"""
     write_digit(ws, 11, 19, 0)
 
 def write_tax_period_code(ws):
-    """Налоговый период 34: BA11 (53), BC11 (55)"""
+    """Налоговый период 34: BA11, BC11"""
     write_digit(ws, 11, 53, 3)  # BA
     write_digit(ws, 11, 55, 4)  # BC
 
 def write_report_year(ws, year):
-    """Отчетный год 2025: BZ11 (78), CB11 (80), CD11 (82), CF11 (84)"""
+    """Отчетный год 2025: BU11, BW11, BY11, CA11"""
     year_str = str(year)
-    columns = [78, 80, 82, 84]
+    columns = [73, 75, 77, 79]  # BU(73), BW(75), BY(77), CA(79)
     for i, digit in enumerate(year_str):
         if i < len(columns):
             write_digit(ws, 11, columns[i], int(digit))
 
 def write_legal_name_by_letters(ws, name):
-    """Название юрлица по буквам: A15, C15, E15... до CA15, затем A17, C17..."""
+    """Название юрлица по буквам: A15, C15, E15..."""
     name_clean = ''.join(ch for ch in name.upper() if ch.isalpha() or ch == ' ')
     row = 15
-    col = 1  # A
+    col = 1
     for char in name_clean:
         if char == ' ':
             char = ' '
@@ -149,8 +144,8 @@ def write_phone_by_letters(ws, phone):
             write_digit(ws, 27, columns[i], int(digit))
 
 def write_last_name_by_letters(ws, last_name):
-    """Фамилия: B43, D43, F43, H43, J43, L43, N43, P43, R43, T43, V43, X43, Z43, AB43..."""
-    col = 2  # B
+    """Фамилия: B43, D43, F43..."""
+    col = 2
     for char in last_name.upper():
         write_letter(ws, 43, col, char)
         col += 2
@@ -212,7 +207,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     # 5. Налоговый период 34
     write_tax_period_code(ws)
     
-    # 6. Отчетный год 2025
+    # 6. Отчетный год 2025 (BU11, BW11, BY11, CA11)
     write_report_year(ws, 2025)
     
     # 7. Название юрлица по буквам
@@ -231,7 +226,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     first_name = fio_parts[1] if len(fio_parts) > 1 else ""
     patronymic = fio_parts[2] if len(fio_parts) > 2 else ""
     
-    # 11. Фамилия, имя, отчество по буквам
+    # 11. ФИО по буквам
     if last_name:
         write_last_name_by_letters(ws, last_name)
     if first_name:

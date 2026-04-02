@@ -6,8 +6,6 @@ from openpyxl.utils import column_index_from_string
 
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
-IP_OKTMO = "36701320"
-
 def format_currency(amount):
     if amount == int(amount):
         return int(amount)
@@ -60,13 +58,24 @@ def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_acc
 
 def write_inn_digit_by_digit_declaration(ws, inn):
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
-    columns = [40, 44, 48, 52, 56, 60, 64, 68, 72, 76, 80, 84]
+    # Колонки для ИНН в строке 2 (каждая цифра через пробел)
+    # B, F, J, N, R, V, Z, AD, AH, AL, AP, AT
+    columns = [2, 6, 10, 14, 18, 22, 26, 30, 34, 38, 42, 46]
     for i, digit in enumerate(inn_str):
         if i < len(columns):
             safe_write(ws, 2, columns[i], int(digit))
 
+def write_kpp_digit_by_digit(ws, kpp):
+    kpp_str = ''.join(ch for ch in str(kpp) if ch.isdigit())
+    columns = [2, 6, 10, 14, 18, 22, 26, 30, 34]
+    for i, digit in enumerate(kpp_str):
+        if i < len(columns):
+            safe_write(ws, 4, columns[i], int(digit))
+
 def write_okved_digit_by_digit(ws, okved):
     okved_str = ''.join(ch for ch in str(okved) if ch.isdigit())
+    # ОКВЭД в строке 27, колонки с какой-то позиции
+    # В шаблоне это колонки 74, 78, 86, 90, 98, 102
     columns = [74, 78, 86, 90, 98, 102]
     for i, digit in enumerate(okved_str):
         if i < len(columns):
@@ -74,6 +83,7 @@ def write_okved_digit_by_digit(ws, okved):
 
 def write_year_digits(ws, year):
     year_str = str(year)
+    # Год в строке 14, колонки 114, 118, 122, 126
     columns = [114, 118, 122, 126]
     for i, digit in enumerate(year_str):
         if i < len(columns):
@@ -81,18 +91,31 @@ def write_year_digits(ws, year):
 
 def fill_declaration_template(operations, ens_data, template_path, output_excel, output_xml, inn, fio, oktmo, okved, phone):
     wb = load_workbook(template_path)
-    ws = wb["стр.1"]
+    ws = wb["Титул"]  # Исправлено: правильное имя листа
     
+    # ИНН
     write_inn_digit_by_digit_declaration(ws, inn)
+    
+    # Год
     write_year_digits(ws, 2025)
-    safe_write(ws, 14, column_index_from_string('O'), 1)
     
+    # Номер корректировки (0 - первичная)
+    safe_write(ws, 14, 18, 0)  # Колонка R (18)
+    
+    # Телефон (строка 43, колонка AZ = 52)
     if phone:
-        safe_write(ws, 43, column_index_from_string('AZ'), phone)
+        phone_digits = ''.join(ch for ch in phone if ch.isdigit())
+        # Записываем телефон цифра за цифрой
+        for i, digit in enumerate(phone_digits[:11]):
+            safe_write(ws, 43, 52 + i, int(digit))
     
+    # ФИО в строке 20 (колонка C = 3)
     safe_write(ws, 20, 3, fio)
-    safe_write(ws, 50, column_index_from_string('U'), fio)
     
+    # ФИО в строке 50 (колонка U = 21)
+    safe_write(ws, 50, 21, fio)
+    
+    # ОКВЭД
     if okved:
         write_okved_digit_by_digit(ws, okved)
     
@@ -106,7 +129,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     tax_rate = 6
     tax_amount = total_income * tax_rate / 100
     
-    # Авансовые платежи
+    # Авансовые платежи из ЕНС
     usn_payments = ens_data.get('usn_payments', [])
     advance_payments = {1: 0.0, 2: 0.0, 3: 0.0}
     for payment in usn_payments:
@@ -123,6 +146,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     paid_in_2025 = any(d.year == 2025 for d in ens_data.get('insurance_paid_dates', []))
     insurance_paid = ens_data.get('insurance_paid', 0) if paid_in_2025 else 0
     
+    # Накопленные доходы
     cum_income = {
         1: quarterly[1],
         2: quarterly[1] + quarterly[2],
@@ -130,50 +154,61 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         4: total_income
     }
     
+    # Накопленный налог
     cum_tax = {i: cum_income[i] * tax_rate / 100 for i in range(1, 5)}
+    
+    # Накопленный вычет (не более налога)
     cum_deductible = {i: min(cum_tax[i], insurance_paid) for i in range(1, 5)} if paid_in_2025 else {i: 0 for i in range(1, 5)}
     
+    # Налог к уплате
     tax_payable = max(0, cum_tax[4] - cum_deductible[4] - advance_payments[1] - advance_payments[2] - advance_payments[3])
     
-    # Заполнение строк по кодам
-    for row in range(50, 200):
-        code_cell = ws.cell(row=row, column=3).value
-        if code_cell:
-            code = str(code_cell).strip()
-            if code == "010":
-                safe_write(ws, row, 4, format_currency(cum_income[1]))
-            elif code == "011":
-                safe_write(ws, row, 4, format_currency(cum_income[2]))
-            elif code == "012":
-                safe_write(ws, row, 4, format_currency(cum_income[3]))
-            elif code == "013":
-                safe_write(ws, row, 4, format_currency(cum_income[4]))
-            elif code == "020":
-                safe_write(ws, row, 4, tax_rate)
-            elif code == "030":
-                safe_write(ws, row, 4, format_currency(cum_tax[1]))
-            elif code == "031":
-                safe_write(ws, row, 4, format_currency(cum_tax[2]))
-            elif code == "032":
-                safe_write(ws, row, 4, format_currency(cum_tax[3]))
-            elif code == "033":
-                safe_write(ws, row, 4, format_currency(cum_tax[4]))
-            elif code == "040":
-                safe_write(ws, row, 4, format_currency(cum_deductible[1]))
-            elif code == "041":
-                safe_write(ws, row, 4, format_currency(cum_deductible[2]))
-            elif code == "042":
-                safe_write(ws, row, 4, format_currency(cum_deductible[3]))
-            elif code == "043":
-                safe_write(ws, row, 4, format_currency(cum_deductible[4]))
-            elif code == "050":
-                safe_write(ws, row, 4, oktmo)
-            elif code == "060":
-                safe_write(ws, row, 4, format_currency(tax_payable))
+    # Заполнение раздела 2.1.1 (лист Раздел 2.1.1)
+    ws21 = wb["Раздел 2.1.1"]
     
+    # Доходы
+    safe_write(ws21, 34, 39, format_currency(cum_income[1]))   # стр 110
+    safe_write(ws21, 35, 39, format_currency(cum_income[2]))   # стр 111
+    safe_write(ws21, 36, 39, format_currency(cum_income[3]))   # стр 112
+    safe_write(ws21, 37, 39, format_currency(cum_income[4]))   # стр 113
+    
+    # Ставка
+    safe_write(ws21, 41, 39, tax_rate)   # стр 120
+    safe_write(ws21, 42, 39, tax_rate)   # стр 121
+    safe_write(ws21, 43, 39, tax_rate)   # стр 122
+    safe_write(ws21, 44, 39, tax_rate)   # стр 123
+    
+    # Исчисленный налог
+    safe_write(ws21, 50, 39, format_currency(cum_tax[1]))   # стр 130
+    safe_write(ws21, 51, 39, format_currency(cum_tax[2]))   # стр 131
+    safe_write(ws21, 52, 39, format_currency(cum_tax[3]))   # стр 132
+    safe_write(ws21, 53, 39, format_currency(cum_tax[4]))   # стр 133
+    
+    # Вычет по взносам (лист Раздел 2.1.1 (продолжение))
+    ws21_cont = wb["Раздел 2.1.1 (продолжение)"]
+    safe_write(ws21_cont, 12, 39, format_currency(cum_deductible[1]))   # стр 140
+    safe_write(ws21_cont, 14, 39, format_currency(cum_deductible[2]))   # стр 141
+    safe_write(ws21_cont, 16, 39, format_currency(cum_deductible[3]))   # стр 142
+    safe_write(ws21_cont, 18, 39, format_currency(cum_deductible[4]))   # стр 143
+    
+    # Заполнение раздела 1.1
+    ws11 = wb["Раздел 1.1"]
+    
+    # ОКТМО (строка 010)
+    safe_write(ws11, 22, 39, oktmo)
+    
+    # Авансовые платежи
+    safe_write(ws11, 28, 39, format_currency(advance_payments[1]))   # стр 020 (28 апреля)
+    safe_write(ws11, 38, 39, format_currency(advance_payments[2]))   # стр 040 (28 июля)
+    safe_write(ws11, 54, 39, format_currency(advance_payments[3]))   # стр 070 (28 октября)
+    
+    # Налог к уплате за год (стр 100)
+    safe_write(ws11, 70, 39, format_currency(tax_payable))
+    
+    # Сохраняем Excel
     wb.save(output_excel)
     
-    # XML
+    # Генерируем XML
     fio_parts = fio.split()
     last_name = fio_parts[0] if len(fio_parts) > 0 else ""
     first_name = fio_parts[1] if len(fio_parts) > 1 else ""

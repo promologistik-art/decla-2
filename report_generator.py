@@ -30,7 +30,7 @@ def safe_write(ws, row, col, value, as_text=False):
         cell.value = value
 
 def write_digit(ws, row, col, digit):
-    """Запись цифры - НЕ меняем шрифт"""
+    """Запись одной цифры"""
     if digit is None:
         return
     target_row, target_col = get_merge_start(ws, row, col)
@@ -38,12 +38,73 @@ def write_digit(ws, row, col, digit):
     cell.value = str(int(digit))
 
 def write_letter(ws, row, col, letter):
-    """Запись буквы - НЕ меняем шрифт"""
+    """Запись одной буквы"""
     if not letter:
         return
     target_row, target_col = get_merge_start(ws, row, col)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = letter
+
+def write_oktmo_digits(ws, row, start_col, oktmo):
+    """Запись ОКТМО (8 цифр) последовательно в ячейки"""
+    oktmo_str = str(oktmo).strip()
+    for i, digit in enumerate(oktmo_str):
+        if i < 8 and digit.isdigit():
+            write_digit(ws, row, start_col + i, int(digit))
+
+def write_amount_digits(ws, row, start_col, amount):
+    """Запись суммы последовательно в ячейки (до 12 цифр)"""
+    amount_str = str(int(abs(amount)))
+    for i, digit in enumerate(amount_str):
+        if i < 12:
+            write_digit(ws, row, start_col + i, int(digit))
+
+def write_phone_by_letters(ws, phone):
+    """Телефон: R29, T29, V29, X29, Z29, AB29, AD29, AF29, AH29, AJ29, AL29"""
+    phone_digits = ''.join(ch for ch in str(phone) if ch.isdigit())
+    columns = [18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38]
+    for i, digit in enumerate(phone_digits[:11]):
+        if i < len(columns):
+            write_digit(ws, 29, columns[i], int(digit))
+
+def write_legal_name_by_letters(ws, name):
+    """Название юрлица по буквам: A15, C15, E15..."""
+    name_clean = ''.join(ch for ch in name.upper() if ch.isalpha() or ch == ' ')
+    row = 15
+    col = 1
+    for char in name_clean:
+        if char == ' ':
+            char = ' '
+        if col > 79:
+            row = 17
+            col = 1
+        write_letter(ws, row, col, char)
+        col += 2
+
+def write_last_name_by_letters(ws, last_name):
+    """Фамилия: B43, D43, F43..."""
+    col = 2
+    for char in last_name.upper():
+        write_letter(ws, 43, col, char)
+        col += 2
+
+def write_first_name_by_letters(ws, first_name):
+    """Имя: B45, D45, F45..."""
+    col = 2
+    for char in first_name.upper():
+        write_letter(ws, 45, col, char)
+        col += 2
+
+def write_patronymic_by_letters(ws, patronymic):
+    """Отчество: B47, D47, F47..."""
+    col = 2
+    for char in patronymic.upper():
+        write_letter(ws, 47, col, char)
+        col += 2
+
+def write_director_last_name(ws, last_name):
+    """Фамилия директора в J50"""
+    write_letter(ws, 50, 10, last_name.upper())
 
 
 # ========== КУДиР ==========
@@ -82,107 +143,21 @@ def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_acc
 # ========== ДЕКЛАРАЦИЯ ==========
 
 def write_inn_digit_by_digit_declaration(ws, inn):
-    """ИНН: Y1, AA1, AC1, AE1, AG1, AI1, AK1, AM1, AO1, AQ1, AS1, AU1"""
+    """ИНН: M1, N1, O1, P1, Q1, R1, S1, T1, U1, V1, W1, X1"""
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
-    columns = [25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47]
+    columns = [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
     for i, digit in enumerate(inn_str):
         if i < len(columns):
             write_digit(ws, 1, columns[i], int(digit))
 
-def write_tax_office_code(ws, inn):
-    """Код налогового органа: AA13, AC13, AE13, AG13"""
-    inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
-    tax_code = inn_str[:4]
-    columns = [27, 29, 31, 33]
-    for i, digit in enumerate(tax_code):
-        if i < len(columns):
-            write_digit(ws, 13, columns[i], int(digit))
-
-def write_place_of_registration_code(ws):
-    """Код по месту учета 120: BW13, BY13, CA13"""
-    write_digit(ws, 13, 75, 1)  # BW
-    write_digit(ws, 13, 77, 2)  # BY
-    write_digit(ws, 13, 79, 0)  # CA
-
-def write_correction_number(ws):
-    """Номер корректировки 0: S11"""
-    write_digit(ws, 11, 19, 0)
-
-def write_tax_period_code(ws):
-    """Налоговый период 34: BA11, BC11"""
-    write_digit(ws, 11, 53, 3)  # BA
-    write_digit(ws, 11, 55, 4)  # BC
-
-def write_report_year(ws, year):
-    """Отчетный год 2025: BU11, BW11, BY11, CA11"""
-    year_str = str(year)
-    columns = [73, 75, 77, 79]  # BU(73), BW(75), BY(77), CA(79)
-    for i, digit in enumerate(year_str):
-        if i < len(columns):
-            write_digit(ws, 11, columns[i], int(digit))
-
-def write_legal_name_by_letters(ws, name):
-    """Название юрлица по буквам: A15, C15, E15..."""
-    name_clean = ''.join(ch for ch in name.upper() if ch.isalpha() or ch == ' ')
-    row = 15
-    col = 1
-    for char in name_clean:
-        if char == ' ':
-            char = ' '
-        if col > 79:  # CA = 79
-            row = 17
-            col = 1
-        write_letter(ws, row, col, char)
-        col += 2
-
-def write_phone_by_letters(ws, phone):
-    """Телефон: U27, W27, Y27, AA27, AC27, AE27, AG27, AI27, AK27, AM27, AO27"""
-    phone_digits = ''.join(ch for ch in str(phone) if ch.isdigit())
-    columns = [21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41]
-    for i, digit in enumerate(phone_digits[:11]):
-        if i < len(columns):
-            write_digit(ws, 27, columns[i], int(digit))
-
-def write_last_name_by_letters(ws, last_name):
-    """Фамилия: B43, D43, F43..."""
-    col = 2
-    for char in last_name.upper():
-        write_letter(ws, 43, col, char)
-        col += 2
-
-def write_first_name_by_letters(ws, first_name):
-    """Имя: B45, D45, F45..."""
-    col = 2
-    for char in first_name.upper():
-        write_letter(ws, 45, col, char)
-        col += 2
-
-def write_patronymic_by_letters(ws, patronymic):
-    """Отчество: B47, D47, F47..."""
-    col = 2
-    for char in patronymic.upper():
-        write_letter(ws, 47, col, char)
-        col += 2
-
-def write_signature_last_name(ws, last_name):
-    """Фамилия подписанта: H50"""
-    write_letter(ws, 50, 8, last_name.upper())
-
 def write_signature_date(ws):
-    """Дата подписи: день V50,X50, месяц AB50,AD50, год AH50,AJ50,AL50,AN50"""
+    """Дата подписи: V50 в формате ДД.ММ.ГГГГ"""
     today = datetime.now()
-    day = str(today.day).zfill(2)
-    month = str(today.month).zfill(2)
-    year = str(today.year)
-    
-    write_digit(ws, 50, 22, int(day[0]))  # V
-    write_digit(ws, 50, 24, int(day[1]))  # X
-    write_digit(ws, 50, 28, int(month[0]))  # AB
-    write_digit(ws, 50, 30, int(month[1]))  # AD
-    write_digit(ws, 50, 34, int(year[0]))  # AH
-    write_digit(ws, 50, 36, int(year[1]))  # AJ
-    write_digit(ws, 50, 38, int(year[2]))  # AL
-    write_digit(ws, 50, 40, int(year[3]))  # AN
+    date_str = today.strftime('%d.%m.%Y')
+    col = 22  # V
+    for char in date_str:
+        write_letter(ws, 50, col, char)
+        col += 1
 
 def fill_declaration_template(operations, ens_data, template_path, output_excel, output_xml, inn, fio, oktmo, okved, phone):
     wb = load_workbook(template_path)
@@ -192,41 +167,64 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     
     ws = wb["Титул"]
     
-    # 1. ИНН
+    # 1. ИНН (M1 - X1)
     write_inn_digit_by_digit_declaration(ws, inn)
     
-    # 2. Код налогового органа
-    write_tax_office_code(ws, inn)
+    # 2. Номер корректировки 0 (S11)
+    write_digit(ws, 11, 19, 0)
     
-    # 3. Код по месту учета 120
-    write_place_of_registration_code(ws)
+    # 3. Налоговый период 34 (BA11, BC11)
+    write_digit(ws, 11, 53, 3)
+    write_digit(ws, 11, 55, 4)
     
-    # 4. Номер корректировки 0
-    write_correction_number(ws)
+    # 4. Отчетный год 2025 (BU11, BW11, BY11, CA11)
+    write_digit(ws, 11, 73, 2)
+    write_digit(ws, 11, 75, 0)
+    write_digit(ws, 11, 77, 2)
+    write_digit(ws, 11, 79, 5)
     
-    # 5. Налоговый период 34
-    write_tax_period_code(ws)
+    # 5. Код налогового органа (AA13, AC13, AE13, AG13) - первые 4 цифры ИНН
+    inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
+    tax_code = inn_str[:4]
+    tax_cols = [27, 29, 31, 33]
+    for i, digit in enumerate(tax_code):
+        if i < len(tax_cols):
+            write_digit(ws, 13, tax_cols[i], int(digit))
     
-    # 6. Отчетный год 2025 (BU11, BW11, BY11, CA11)
-    write_report_year(ws, 2025)
+    # 6. Код по месту учета 120 (BW13, BY13, CA13)
+    write_digit(ws, 13, 75, 1)
+    write_digit(ws, 13, 77, 2)
+    write_digit(ws, 13, 79, 0)
     
-    # 7. Название юрлица по буквам
+    # 7. ОКТМО строка 010 (Z13 - AG13)
+    write_oktmo_digits(ws, 13, 26, oktmo)
+    
+    # 8. ОКТМО строка 030 (Z18 - AG18)
+    write_oktmo_digits(ws, 18, 26, oktmo)
+    
+    # 9. ОКТМО строка 060 (Z26 - AG26)
+    write_oktmo_digits(ws, 26, 26, oktmo)
+    
+    # 10. ОКТМО строка 090 (Z34 - AG34)
+    write_oktmo_digits(ws, 34, 26, oktmo)
+    
+    # 11. Название юрлица по буквам
     write_legal_name_by_letters(ws, f"ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ {fio}")
     
-    # 8. Телефон
+    # 12. Телефон (R29 и далее)
     if phone:
         write_phone_by_letters(ws, phone)
     
-    # 9. Объект налогообложения (1 = доходы)
-    write_digit(ws, 29, 18, 1)  # R = 18
+    # 13. Объект налогообложения (1 = доходы) в R29
+    write_digit(ws, 29, 18, 1)
     
-    # 10. Разбор ФИО
+    # 14. Разбор ФИО
     fio_parts = fio.split()
     last_name = fio_parts[0] if len(fio_parts) > 0 else ""
     first_name = fio_parts[1] if len(fio_parts) > 1 else ""
     patronymic = fio_parts[2] if len(fio_parts) > 2 else ""
     
-    # 11. ФИО по буквам
+    # 15. ФИО по буквам
     if last_name:
         write_last_name_by_letters(ws, last_name)
     if first_name:
@@ -234,10 +232,10 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     if patronymic:
         write_patronymic_by_letters(ws, patronymic)
     
-    # 12. Фамилия подписанта
-    write_signature_last_name(ws, last_name)
+    # 16. Фамилия директора в J50
+    write_director_last_name(ws, last_name)
     
-    # 13. Дата подписи
+    # 17. Дата подписи в V50
     write_signature_date(ws)
     
     # Расчет доходов по кварталам
@@ -277,7 +275,32 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     
     tax_payable = max(0, cum_tax[4] - cum_deductible[4] - advance_payments[1] - advance_payments[2] - advance_payments[3])
     
-    # Заполнение разделов
+    # 18. Авансовые платежи (если были) или 0
+    # Строка 020 (Z15)
+    if advance_payments[1] > 0:
+        write_amount_digits(ws, 15, 26, advance_payments[1])
+    else:
+        write_digit(ws, 15, 26, 0)
+    
+    # Строка 040 (Z20)
+    if advance_payments[2] > 0:
+        write_amount_digits(ws, 20, 26, advance_payments[2])
+    else:
+        write_digit(ws, 20, 26, 0)
+    
+    # Строка 070 (Z22)
+    if advance_payments[3] > 0:
+        write_amount_digits(ws, 22, 26, advance_payments[3])
+    else:
+        write_digit(ws, 22, 26, 0)
+    
+    # 19. Строка 100 - налог к уплате (Z30)
+    if tax_payable > 0:
+        write_amount_digits(ws, 30, 26, tax_payable)
+    else:
+        write_digit(ws, 30, 26, 0)
+    
+    # Заполнение раздела 2.1.1
     if "Раздел 2.1.1" in wb.sheetnames:
         ws21 = wb["Раздел 2.1.1"]
         safe_write(ws21, 34, 39, format_currency(cum_income[1]), as_text=True)
@@ -299,14 +322,6 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         safe_write(ws21_cont, 14, 39, format_currency(cum_deductible[2]), as_text=True)
         safe_write(ws21_cont, 16, 39, format_currency(cum_deductible[3]), as_text=True)
         safe_write(ws21_cont, 18, 39, format_currency(cum_deductible[4]), as_text=True)
-    
-    if "Раздел 1.1" in wb.sheetnames:
-        ws11 = wb["Раздел 1.1"]
-        safe_write(ws11, 22, 39, oktmo)
-        safe_write(ws11, 28, 39, format_currency(advance_payments[1]), as_text=True)
-        safe_write(ws11, 38, 39, format_currency(advance_payments[2]), as_text=True)
-        safe_write(ws11, 54, 39, format_currency(advance_payments[3]), as_text=True)
-        safe_write(ws11, 70, 39, format_currency(tax_payable), as_text=True)
     
     wb.save(output_excel)
     

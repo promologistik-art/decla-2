@@ -411,7 +411,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         write_amount_digits(ws21_cont, 11, 28, cum_deductible[1])
         
         # Строка 141 - вычет за полугодие (Z14 = колонка 26, строка 14)
-        write_amount_digits(ws21_cont, 14, 26, cum_deductible[2])
+         write_amount_digits(ws21_cont, 14, 28, cum_deductible[2])
         
         # Строка 142 - вычет за 9 месяцев (AB17 = колонка 28, строка 17)
         write_amount_digits(ws21_cont, 17, 28, cum_deductible[3])

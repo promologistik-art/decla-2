@@ -1,7 +1,10 @@
 import os
+import warnings
 from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string
+
+warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
 IP_OKTMO = "36701320"
 
@@ -11,7 +14,6 @@ def format_currency(amount):
     return round(amount, 2)
 
 def safe_write(ws, row, col, value):
-    """Безопасная запись в ячейку с учетом объединенных ячеек"""
     if value is None:
         return
     for merged in ws.merged_cells.ranges:
@@ -20,77 +22,94 @@ def safe_write(ws, row, col, value):
             return
     ws.cell(row=row, column=col).value = value
 
-def write_inn_digit_by_digit(ws, inn):
-    """Записывает ИНН по одной цифре в ячейки A28, C28, E28, G28, I28, K28, M28, O28, Q28, S28, U28, W28"""
-    inn_str = str(inn)
-    inn_str = ''.join(ch for ch in inn_str if ch.isdigit())
-    
+
+# ========== КУДиР ==========
+
+def write_inn_digit_by_digit_kudir(ws, inn):
+    inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
     positions = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23]
-    
     for i, digit in enumerate(inn_str):
         if i < len(positions):
-            col = positions[i]
-            safe_write(ws, 28, col, int(digit))
+            safe_write(ws, 28, positions[i], int(digit))
 
 def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_accounts, year=2025):
-    """Заполнение титульного листа шаблона КУДиР"""
     wb = load_workbook(template_path)
     ws1 = wb["Лист1"]
     
-    # Год (H15)
-    year_last_two = year % 100
-    safe_write(ws1, 15, column_index_from_string('H'), year_last_two)
-    
-    # ФИО (V18)
+    safe_write(ws1, 15, column_index_from_string('H'), year % 100)
     safe_write(ws1, 18, column_index_from_string('V'), fio)
-    
-    # ИНН (A28, C28, E28, G28, I28, K28, M28, O28, Q28, S28, U28, W28)
-    write_inn_digit_by_digit(ws1, inn)
-    
-    # Форма по ОКУД (BB14)
+    write_inn_digit_by_digit_kudir(ws1, inn)
     safe_write(ws1, 14, column_index_from_string('BB'), 1151085)
     
-    # Дата заполнения (BB15, BG15, BJ15)
     today = datetime.now()
     safe_write(ws1, 15, column_index_from_string('BB'), today.year)
     safe_write(ws1, 15, column_index_from_string('BG'), today.month)
     safe_write(ws1, 15, column_index_from_string('BJ'), today.day)
-    
-    # Объект налогообложения (P30)
     safe_write(ws1, 30, column_index_from_string('P'), "Доходы")
     
-    # Счета ИП (A38, A40, A42...)
     row = 38
     for acc in ip_accounts:
-        account_text = f"{acc['number']} {acc['bank']} БИК {acc['bik']}"
-        safe_write(ws1, row, 1, account_text)
+        safe_write(ws1, row, 1, f"{acc['number']} {acc['bank']} БИК {acc['bik']}")
         row += 2
     
     wb.save(output_path)
-    
-    total_income = sum(op['amount'] for op in operations)
-    return total_income
+    return sum(op['amount'] for op in operations)
 
+
+# ========== ДЕКЛАРАЦИЯ ==========
+
+def write_inn_digit_by_digit_declaration(ws, inn):
+    inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
+    columns = [40, 44, 48, 52, 56, 60, 64, 68, 72, 76, 80, 84]
+    for i, digit in enumerate(inn_str):
+        if i < len(columns):
+            safe_write(ws, 2, columns[i], int(digit))
+
+def write_okved_digit_by_digit(ws, okved):
+    okved_str = ''.join(ch for ch in str(okved) if ch.isdigit())
+    columns = [74, 78, 86, 90, 98, 102]
+    for i, digit in enumerate(okved_str):
+        if i < len(columns):
+            safe_write(ws, 27, columns[i], int(digit))
+
+def write_year_digits(ws, year):
+    year_str = str(year)
+    columns = [114, 118, 122, 126]
+    for i, digit in enumerate(year_str):
+        if i < len(columns):
+            safe_write(ws, 14, columns[i], int(digit))
 
 def fill_declaration_template(operations, ens_data, template_path, output_excel, output_xml, inn, fio, oktmo, okved, phone):
-    """Заполнение шаблона декларации"""
+    wb = load_workbook(template_path)
+    ws = wb["стр.1"]
     
-    # ========== РАСЧЕТ ДОХОДОВ ПО КВАРТАЛАМ ==========
+    write_inn_digit_by_digit_declaration(ws, inn)
+    write_year_digits(ws, 2025)
+    safe_write(ws, 14, column_index_from_string('O'), 1)
+    
+    if phone:
+        safe_write(ws, 43, column_index_from_string('AZ'), phone)
+    
+    safe_write(ws, 20, 3, fio)
+    safe_write(ws, 50, column_index_from_string('U'), fio)
+    
+    if okved:
+        write_okved_digit_by_digit(ws, okved)
+    
+    # Расчет доходов по кварталам
     quarterly = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
     for op in operations:
         quarter = (op['date'].month - 1) // 3 + 1
         quarterly[quarter] += op['amount']
     
-    total_income = quarterly[1] + quarterly[2] + quarterly[3] + quarterly[4]
+    total_income = sum(quarterly.values())
     tax_rate = 6
     tax_amount = total_income * tax_rate / 100
     
-    # ========== АВАНСОВЫЕ ПЛАТЕЖИ ИЗ ЕНС ==========
+    # Авансовые платежи
     usn_payments = ens_data.get('usn_payments', [])
-    advance_payments = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
-    
+    advance_payments = {1: 0.0, 2: 0.0, 3: 0.0}
     for payment in usn_payments:
-        # Определяем период аванса по дате
         if payment['date']:
             month = payment['date'].month
             if month <= 3:
@@ -99,10 +118,11 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
                 advance_payments[2] += payment['amount']
             elif month <= 9:
                 advance_payments[3] += payment['amount']
-            else:
-                advance_payments[4] += payment['amount']
     
-    # ========== СУММЫ НАРАСТАЮЩИМ ИТОГОМ ==========
+    # Вычет по взносам (только уплаченные в 2025)
+    paid_in_2025 = any(d.year == 2025 for d in ens_data.get('insurance_paid_dates', []))
+    insurance_paid = ens_data.get('insurance_paid', 0) if paid_in_2025 else 0
+    
     cum_income = {
         1: quarterly[1],
         2: quarterly[1] + quarterly[2],
@@ -110,62 +130,10 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         4: total_income
     }
     
-    cum_tax = {
-        1: cum_income[1] * tax_rate / 100,
-        2: cum_income[2] * tax_rate / 100,
-        3: cum_income[3] * tax_rate / 100,
-        4: tax_amount
-    }
+    cum_tax = {i: cum_income[i] * tax_rate / 100 for i in range(1, 5)}
+    cum_deductible = {i: min(cum_tax[i], insurance_paid) for i in range(1, 5)} if paid_in_2025 else {i: 0 for i in range(1, 5)}
     
-    # Вычеты по взносам (только уплаченные в 2025)
-    paid_in_2025 = any(d.year == 2025 for d in ens_data.get('insurance_paid_dates', []))
-    insurance_paid = ens_data.get('insurance_paid', 0)
-    
-    if paid_in_2025:
-        cum_deductible = {
-            1: min(cum_tax[1], insurance_paid),
-            2: min(cum_tax[2], insurance_paid),
-            3: min(cum_tax[3], insurance_paid),
-            4: min(cum_tax[4], insurance_paid)
-        }
-    else:
-        cum_deductible = {1: 0, 2: 0, 3: 0, 4: 0}
-    
-    # Налог к уплате за год (с учетом авансов)
     tax_payable = max(0, cum_tax[4] - cum_deductible[4] - advance_payments[1] - advance_payments[2] - advance_payments[3])
-    
-    # ========== ЗАПОЛНЕНИЕ EXCEL ==========
-    wb = load_workbook(template_path)
-    ws = wb["стр.1"]
-    
-    # ИНН (AG7)
-    safe_write(ws, 7, column_index_from_string('AG'), inn)
-    
-    # Отчетный год (BJ14)
-    safe_write(ws, 14, column_index_from_string('BJ'), 2025)
-    
-    # Контактный телефон
-    if phone:
-        for row in range(30, 60):
-            cell_val = ws.cell(row=row, column=1).value
-            if cell_val and isinstance(cell_val, str) and "телефон" in cell_val.lower():
-                safe_write(ws, row, 2, phone)
-                break
-    
-    # ФИО (ищем строку с "фамилия, имя, отчество")
-    for row in range(30, 60):
-        cell_val = ws.cell(row=row, column=1).value
-        if cell_val and isinstance(cell_val, str) and "фамилия" in cell_val.lower():
-            safe_write(ws, row+1, 3, fio)
-            break
-    
-    # ОКВЭД
-    if okved:
-        for row in range(30, 60):
-            cell_val = ws.cell(row=row, column=1).value
-            if cell_val and isinstance(cell_val, str) and "ОКВЭД" in cell_val:
-                safe_write(ws, row, 2, okved)
-                break
     
     # Заполнение строк по кодам
     for row in range(50, 200):
@@ -205,7 +173,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     
     wb.save(output_excel)
     
-    # ========== XML ==========
+    # XML
     fio_parts = fio.split()
     last_name = fio_parts[0] if len(fio_parts) > 0 else ""
     first_name = fio_parts[1] if len(fio_parts) > 1 else ""
@@ -266,7 +234,6 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
 
 
 def generate_report(operations, ens_data, output_dir, user_id, kudir_template, decl_template, inn, fio, oktmo, ip_accounts, okved="", phone=""):
-    """Генерация отчетности"""
     kudir_path = os.path.join(output_dir, f"kudir_{user_id}.xlsx")
     total_income = fill_kudir_template(operations, kudir_template, kudir_path, inn, fio, ip_accounts)
     

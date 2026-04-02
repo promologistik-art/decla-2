@@ -51,7 +51,7 @@ class UserSession:
         self.bank_operations.extend(operations)
         if inn and len(inn) >= 10 and inn.isdigit():
             self.inn = inn
-        if fio and len(fio) > 10 and not any(x in fio for x in ["Р/С", "БИК", "ИНН"]):
+        if fio and len(fio) > 10:
             self.fio = fio
         if accounts:
             for acc in accounts:
@@ -136,10 +136,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     msg += f"\n🏦 Счета: {', '.join([a['number'] for a in session.ip_accounts])}"
                 
                 await update.message.reply_text(msg)
-                
                 await update.message.reply_text(
-                    "📌 *Следующий шаг:* загрузите выписку с Единого налогового счета (ЕНС) в формате CSV\n\n"
-                    "Выписку ЕНС можно скачать в личном кабинете налогоплательщика",
+                    "📌 *Следующий шаг:* загрузите выписку с Единого налогового счета (ЕНС) в формате CSV",
                     parse_mode="Markdown"
                 )
             else:
@@ -162,8 +160,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"• Уплачено в 2025: {'Да' if paid_in_2025 else 'Нет'}\n"
                 f"• Пени: {ens_data['penalties']:,.2f} ₽\n"
                 f"• ОКТМО: {oktmo}\n"
-                f"• Авансов по УСН: {len(usn_payments)} платеж(ей)\n\n"
-                f"✅ Теперь введите /report для формирования отчетности"
+                f"• Авансов по УСН: {len(usn_payments)}\n\n"
+                f"✅ Теперь введите /report"
             )
         
         else:
@@ -194,18 +192,16 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Сначала загрузите выписку ЕНС")
         return
     
-    # Если нет ОКВЭД, спрашиваем
     if not session.okved:
         session.awaiting_okved = True
         await update.message.reply_text(
             "📝 Для заполнения декларации укажите код ОКВЭД\n"
-            "Например: *47.91* (торговля по почте/Интернет)\n\n"
-            "Введите код:",
+            "Например: *4791* (торговля по почте/Интернет)\n\n"
+            "Введите только цифры:",
             parse_mode="Markdown"
         )
         return
     
-    # Если нет телефона, спрашиваем
     if not session.phone:
         session.awaiting_phone = True
         await update.message.reply_text(
@@ -219,29 +215,25 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Формирую отчетность...")
     
     try:
-        # Собираем все операции
         all_ops = []
         for op in session.bank_operations:
             if isinstance(op, dict):
                 all_ops.append(op)
             elif isinstance(op, list):
                 all_ops.extend(op)
-        
         all_ops.sort(key=lambda x: x['date'])
         
-        # Пути к шаблонам
         kudir_template = os.path.join(TEMPLATES_DIR, "KUDIR_template.xlsx")
         decl_template = os.path.join(TEMPLATES_DIR, "Declaration_template.xlsx")
         
         if not os.path.exists(kudir_template):
-            await update.message.reply_text(f"❌ Шаблон КУДиР не найден: {kudir_template}")
+            await update.message.reply_text(f"❌ Шаблон КУДиР не найден")
             return
         
         if not os.path.exists(decl_template):
-            await update.message.reply_text(f"❌ Шаблон декларации не найден: {decl_template}")
+            await update.message.reply_text(f"❌ Шаблон декларации не найден")
             return
         
-        # Данные
         inn = session.inn if session.inn else "632312967829"
         fio = session.fio if session.fio else "Леонтьев Артём Владиславович"
         oktmo = session.oktmo if session.oktmo else "36701320"
@@ -249,27 +241,15 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         okved = session.okved
         phone = session.phone
         
-        # Если нет счетов, добавляем по умолчанию
         if not ip_accounts:
             ip_accounts = [
                 {'number': '40802810000000009773', 'bank': 'ООО "ВБ Банк"', 'bik': '044525450'},
                 {'number': '40802810100000851604', 'bank': 'ООО "ОЗОН БАНК"', 'bik': '044525068'},
             ]
         
-        # Генерируем отчетность
         kudir_path, decl_excel, decl_xml, total_income, tax_payable = generate_report(
-            all_ops, 
-            session.ens_data, 
-            OUTPUT_DIR, 
-            user_id,
-            kudir_template,
-            decl_template,
-            inn,
-            fio,
-            oktmo,
-            ip_accounts,
-            okved,
-            phone
+            all_ops, session.ens_data, OUTPUT_DIR, user_id,
+            kudir_template, decl_template, inn, fio, oktmo, ip_accounts, okved, phone
         )
         
         await update.message.reply_text(
@@ -297,7 +277,6 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка текстовых сообщений (ОКВЭД, телефон)"""
     user_id = update.effective_user.id
     
     if user_id not in user_sessions:
@@ -307,19 +286,25 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session = user_sessions[user_id]
     text = update.message.text.strip()
     
-    # Ждем ОКВЭД
     if session.awaiting_okved:
-        session.okved = text
-        session.awaiting_okved = False
-        await update.message.reply_text(f"✅ ОКВЭД сохранен: {text}\n\n📞 Теперь укажите контактный телефон:")
-        session.awaiting_phone = True
+        okved_digits = ''.join(ch for ch in text if ch.isdigit())
+        if okved_digits:
+            session.okved = okved_digits
+            session.awaiting_okved = False
+            await update.message.reply_text(f"✅ ОКВЭД сохранен: {okved_digits}\n\n📞 Теперь укажите контактный телефон:")
+            session.awaiting_phone = True
+        else:
+            await update.message.reply_text("❌ Введите цифры ОКВЭД (например, 4791)")
         return
     
-    # Ждем телефон
     if session.awaiting_phone:
-        session.phone = text
-        session.awaiting_phone = False
-        await update.message.reply_text(f"✅ Телефон сохранен: {text}\n\n🔄 Введите /report для формирования отчетности")
+        phone_digits = ''.join(ch for ch in text if ch.isdigit())
+        if phone_digits:
+            session.phone = phone_digits
+            session.awaiting_phone = False
+            await update.message.reply_text(f"✅ Телефон сохранен: {phone_digits}\n\n🔄 Введите /report")
+        else:
+            await update.message.reply_text("❌ Введите номер телефона цифрами")
         return
 
 

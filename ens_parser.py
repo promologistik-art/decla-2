@@ -50,10 +50,9 @@ def parse_ens_statement(file_path):
         'insurance_paid_dates': [],
         'penalties': 0.0,
         'oktmo': '',
-        'usn_payments': []  # авансовые платежи по УСН
+        'usn_payments': []
     }
     
-    # Ищем колонки
     col_op = None
     col_amount = None
     col_date = None
@@ -80,7 +79,6 @@ def parse_ens_statement(file_path):
                 col_amount = col
                 break
     
-    # Ищем ОКТМО
     for _, row in df.iterrows():
         if col_oktmo:
             oktmo_val = row.get(col_oktmo)
@@ -95,29 +93,20 @@ def parse_ens_statement(file_path):
             kbk = str(row.get(col_kbk, ''))
             date = parse_date(row.get(col_date, ''))
             
-            # Начисление страховых взносов
             if 'начислено' in op and 'страховые взносы' in op:
                 result['insurance_accrued'] += abs(amount)
-            
-            # Пени
             elif 'пеня' in op:
                 result['penalties'] += abs(amount)
-            
-            # Уплата
             elif 'уплата' in op or 'платеж' in op:
-                # Авансовые платежи по УСН
                 if '18201061201010000510' in kbk:
                     if date and amount > 0:
                         result['usn_payments'].append({
                             'date': date,
                             'amount': amount
                         })
-                # Страховые взносы (уплачены в 2026)
                 elif date and date.year == 2026 and amount > 0:
                     result['insurance_paid'] += amount
                     result['insurance_paid_dates'].append(date)
-            
-            # Страховые взносы по КБК
             elif '18210202000010000160' in kbk and amount > 0:
                 if date and date.year == 2026:
                     result['insurance_paid'] += amount

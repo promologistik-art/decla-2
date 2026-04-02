@@ -39,27 +39,22 @@ def extract_ip_data(df):
             
             # ВБ Банк: "Индивидуальный предприниматель"
             if "индивидуальный предприниматель" in val_lower:
-                # ФИО — вся строка без служебных слов
                 fio = val.replace("Индивидуальный предприниматель", "").replace("ИП", "").strip()
-                # Проверяем соседнюю колонку
                 if col + 1 < len(row) and pd.notna(row.iloc[col + 1]):
                     fio_candidate = str(row.iloc[col + 1]).strip()
                     if len(fio_candidate) > 10:
                         fio = fio_candidate
                 
-                # Ищем ИНН в следующих строках
                 for r in range(idx, min(idx + 5, len(df))):
                     for c in range(len(df.iloc[r])):
                         cell = str(df.iloc[r, c]) if pd.notna(df.iloc[r, c]) else ""
                         if "инн" in cell.lower():
-                            # Ищем цифры после "ИНН"
                             if ":" in cell:
                                 parts = cell.split(":")
                                 if len(parts) > 1:
                                     inn_candidate = ''.join(ch for ch in parts[1] if ch.isdigit())
                                     if len(inn_candidate) == 12:
                                         inn = inn_candidate
-                            # Ищем в соседней ячейке
                             elif c + 1 < len(df.iloc[r]) and pd.notna(df.iloc[r, c + 1]):
                                 inn_candidate = ''.join(ch for ch in str(df.iloc[r, c + 1]) if ch.isdigit())
                                 if len(inn_candidate) == 12:
@@ -69,7 +64,6 @@ def extract_ip_data(df):
             # ОЗОН Банк: "Клиент:"
             if "клиент:" in val_lower:
                 fio = val.replace("Клиент:", "").replace("ИП", "").strip()
-                # Ищем ИНН в следующих строках
                 for r in range(idx, min(idx + 3, len(df))):
                     for c in range(len(df.iloc[r])):
                         cell = str(df.iloc[r, c]) if pd.notna(df.iloc[r, c]) else ""
@@ -79,36 +73,30 @@ def extract_ip_data(df):
                                 inn = inn_candidate
                 break
     
-    # Очищаем ФИО
     fio = fio.replace("Р/С:", "").replace("БИК:", "").strip()
     fio = ' '.join(fio.split())
     
     return inn, fio
 
 def extract_ip_accounts(df):
-    """Извлекает счета ИП из выписки (только по строке "Счет:")"""
+    """Извлекает счета ИП из выписки (по строке "Счет:")"""
     accounts = []
     seen_numbers = set()
     
     for idx, row in df.iterrows():
         for col in range(len(row)):
             val = str(row.iloc[col]) if pd.notna(row.iloc[col]) else ""
-            # Ищем строку "Счет:"
             if "счет:" in val.lower():
-                # Номер счета может быть в этой же ячейке после ":"
                 if ":" in val:
                     account_number = ''.join(ch for ch in val.split(":")[-1] if ch.isdigit())
-                # Или в соседней ячейке
                 elif col + 1 < len(row) and pd.notna(row.iloc[col + 1]):
                     account_number = ''.join(ch for ch in str(row.iloc[col + 1]) if ch.isdigit())
                 else:
                     continue
                 
-                # Ищем банк и БИК
                 bank = ""
                 bik = ""
                 
-                # Проверяем строку счета и соседние
                 for r in range(max(0, idx-2), min(len(df), idx+3)):
                     for c in range(max(0, col-5), min(len(row), col+8)):
                         cell = str(df.iloc[r, c]) if pd.notna(df.iloc[r, c]) else ""
@@ -135,13 +123,9 @@ def parse_bank_statement(file_path):
     """Парсинг выписки: извлекаем доходы, данные ИП и счета"""
     df = pd.read_excel(file_path, header=None)
     
-    # Извлекаем данные ИП
     ip_inn, ip_fio = extract_ip_data(df)
-    
-    # Извлекаем счета ИП
     ip_accounts = extract_ip_accounts(df)
     
-    # Находим строку с заголовками (где есть "кредит")
     header_row = None
     credit_col = None
     date_col = None
@@ -166,10 +150,8 @@ def parse_bank_statement(file_path):
     if header_row is None:
         raise Exception("Не найдена колонка 'Кредит'")
     
-    # Берем данные после заголовка
     df_data = df.iloc[header_row + 1:].reset_index(drop=True)
     
-    # Если не нашли колонку с датой, ищем первую колонку с датами
     if date_col is None:
         for col in range(len(df_data.columns)):
             for row in range(min(5, len(df_data))):
@@ -184,7 +166,6 @@ def parse_bank_statement(file_path):
             if date_col is not None:
                 break
     
-    # Если не нашли колонку с назначением, берем последнюю
     if purpose_col is None:
         purpose_col = len(df_data.columns) - 1
     
@@ -192,7 +173,6 @@ def parse_bank_statement(file_path):
     
     for idx, row in df_data.iterrows():
         try:
-            # Сумма по кредиту
             credit_val = row.iloc[credit_col] if credit_col < len(row) else None
             if pd.isna(credit_val):
                 continue
@@ -201,7 +181,6 @@ def parse_bank_statement(file_path):
             if amount <= 0:
                 continue
             
-            # Дата
             if date_col is None or date_col >= len(row):
                 continue
             date_val = row.iloc[date_col]
@@ -211,22 +190,18 @@ def parse_bank_statement(file_path):
             if not date:
                 continue
             
-            # Назначение
             purpose = ""
             if purpose_col < len(row):
                 purpose_val = row.iloc[purpose_col]
                 if pd.notna(purpose_val):
                     purpose = str(purpose_val)
             
-            # Пропускаем строки "Итого"
             if "итого" in purpose.lower():
                 continue
             
-            # Исключаем переводы себе
             if any(word in purpose.lower() for word in ["собственных средств", "перевод собственных", "вывод собственных"]):
                 continue
             
-            # Номер документа
             doc_num = ""
             for col in range(min(5, len(row))):
                 doc_val = str(row.iloc[col]) if pd.notna(row.iloc[col]) else ""

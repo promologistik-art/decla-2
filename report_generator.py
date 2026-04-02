@@ -218,7 +218,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         write_phone_by_letters(ws, phone)
     
     # 9. Объект налогообложения (1 = доходы)
-    write_digit(ws, 20, 36, 1)
+    write_digit(ws, 29, 18, 1)  # R = 18
     
     # 10. Разбор ФИО
     fio_parts = fio.split()

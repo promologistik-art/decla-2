@@ -3,7 +3,6 @@ import warnings
 from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string
-from openpyxl.styles import Font
 
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
@@ -188,7 +187,7 @@ def write_report_year(ws, year):
             write_digit(ws, 11, columns[i], int(digit))
 
 def write_director_last_name_titul(ws, last_name):
-    """Фамилия директора в H50 на листе Титул (шрифт не меняем)"""
+    """Фамилия директора в H50 на листе Титул"""
     target_row, target_col = get_merge_start(ws, 50, 8)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = last_name.upper()
@@ -210,13 +209,13 @@ def write_signature_date_titul(ws):
     write_digit(ws, 50, 40, int(year[3]))
 
 def write_director_last_name_section11(ws, last_name):
-    """Фамилия директора в J50 на листе Раздел 1.1 (шрифт не меняем)"""
+    """Фамилия директора в J50 на листе Раздел 1.1"""
     target_row, target_col = get_merge_start(ws, 50, 10)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = last_name.upper()
 
 def write_signature_date_section11(ws):
-    """Дата подписи на листе Раздел 1.1: V50 целиком в формате ДД.ММ.ГГГГ (шрифт не меняем)"""
+    """Дата подписи на листе Раздел 1.1: V50 целиком"""
     today = datetime.now()
     date_str = today.strftime('%d.%m.%Y')
     target_row, target_col = get_merge_start(ws, 50, 22)
@@ -233,41 +232,24 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     
     ws_titul = wb["Титул"]
     
-    # ИНН
     write_inn_digit_by_digit_titul(ws_titul, inn)
-    
-    # Код налогового органа
     write_tax_office_code(ws_titul, inn)
-    
-    # Код по месту учета 120
     write_place_of_registration_code(ws_titul)
-    
-    # Номер корректировки 0
     write_correction_number(ws_titul)
-    
-    # Налоговый период 34
     write_tax_period_code(ws_titul)
-    
-    # Отчетный год 2025
     write_report_year(ws_titul, 2025)
-    
-    # Название юрлица по буквам
     write_legal_name_by_letters(ws_titul, f"ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ {fio}")
     
-    # Телефон
     if phone:
         write_phone_by_letters(ws_titul, phone)
     
-    # Объект налогообложения (1 = доходы) в R29
     write_digit(ws_titul, 29, 18, 1)
     
-    # Разбор ФИО
     fio_parts = fio.split()
     last_name = fio_parts[0] if len(fio_parts) > 0 else ""
     first_name = fio_parts[1] if len(fio_parts) > 1 else ""
     patronymic = fio_parts[2] if len(fio_parts) > 2 else ""
     
-    # ФИО по буквам
     if last_name:
         write_last_name_by_letters(ws_titul, last_name)
     if first_name:
@@ -275,10 +257,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     if patronymic:
         write_patronymic_by_letters(ws_titul, patronymic)
     
-    # Фамилия директора в H50
     write_director_last_name_titul(ws_titul, last_name)
-    
-    # Дата подписи на Титуле
     write_signature_date_titul(ws_titul)
     
     # ========== ЛИСТ "Раздел 1.1" ==========
@@ -287,28 +266,15 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     
     ws_s11 = wb["Раздел 1.1"]
     
-    # ИНН
     write_inn_digit_by_digit_section11(ws_s11, inn)
-    
-    # ОКТМО строка 010 (Z13 - AG13)
     write_oktmo_digits(ws_s11, 13, 26, oktmo)
-    
-    # ОКТМО строка 030 (Z18 - AG18)
     write_oktmo_digits(ws_s11, 18, 26, oktmo)
-    
-    # ОКТМО строка 060 (Z26 - AG26)
     write_oktmo_digits(ws_s11, 26, 26, oktmo)
-    
-    # ОКТМО строка 090 (Z34 - AG34)
     write_oktmo_digits(ws_s11, 34, 26, oktmo)
-    
-    # Фамилия директора в J50
     write_director_last_name_section11(ws_s11, last_name)
-    
-    # Дата подписи в V50
     write_signature_date_section11(ws_s11)
     
-    # Расчет доходов по кварталам
+    # Расчет доходов
     quarterly = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
     for op in operations:
         quarter = (op['date'].month - 1) // 3 + 1
@@ -361,25 +327,25 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     write_digit(ws_s11, 23, 26, 0)
     
     # Строка 070 - аванс за 9 месяцев (Z28)
-if advance_payments[3] > 0:
-    write_amount_digits(ws_s11, 28, 26, advance_payments[3])
-else:
-    write_digit(ws_s11, 28, 26, 0)
-
-# Строка 080 - аванс к уменьшению за 9 месяцев (Z31)
-write_digit(ws_s11, 31, 26, 0)
-
-# Строка 100 - налог к уплате (Z36)
-if tax_payable > 0:
-    write_amount_digits(ws_s11, 36, 26, tax_payable)
-else:
-    write_digit(ws_s11, 36, 26, 0)
-
-# Строка 110 - налог к уменьшению (Z41)
-if tax_payable < 0:
-    write_amount_digits(ws_s11, 41, 26, abs(tax_payable))
-else:
-    write_digit(ws_s11, 41, 26, 0)
+    if advance_payments[3] > 0:
+        write_amount_digits(ws_s11, 28, 26, advance_payments[3])
+    else:
+        write_digit(ws_s11, 28, 26, 0)
+    
+    # Строка 080 - аванс к уменьшению за 9 месяцев (Z31)
+    write_digit(ws_s11, 31, 26, 0)
+    
+    # Строка 100 - налог к уплате (Z36)
+    if tax_payable > 0:
+        write_amount_digits(ws_s11, 36, 26, tax_payable)
+    else:
+        write_digit(ws_s11, 36, 26, 0)
+    
+    # Строка 110 - налог к уменьшению (Z41)
+    if tax_payable < 0:
+        write_amount_digits(ws_s11, 41, 26, abs(tax_payable))
+    else:
+        write_digit(ws_s11, 41, 26, 0)
     
     # ========== ЛИСТ "Раздел 2.1.1" ==========
     if "Раздел 2.1.1" in wb.sheetnames:

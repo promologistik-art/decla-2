@@ -362,10 +362,10 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         # ИНН
         write_inn_digit_by_digit_section21(ws21, inn)
         
-        # Строка 102 - признак налогоплательщика (2 = нет сотрудников)
-        write_digit(ws21, 27, 39, 2)
+        # Строка 102 - признак налогоплательщика (2 = нет сотрудников) в AC11
+        write_digit(ws21, 11, 29, 2)
         
-        # Строка 110 - доходы за 1 квартал (AC15 = колонка 29, строка 15)
+        # Строка 110 - доходы за 1 квартал (AC15)
         write_amount_digits(ws21, 15, 29, cum_income[1])
         
         # Строка 111 - доходы за полугодие (AC17)
@@ -377,11 +377,19 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         # Строка 113 - доходы за год (AC21)
         write_amount_digits(ws21, 21, 29, cum_income[4])
         
-        # Строка 120-123 - налоговая ставка 6
-        write_amount_digits(ws21, 29, 29, 6)  # 120
-        write_amount_digits(ws21, 30, 29, 6)  # 121
-        write_amount_digits(ws21, 31, 29, 6)  # 122
-        write_amount_digits(ws21, 32, 29, 6)  # 123
+        # Строка 120 - налоговая ставка за 1 квартал (AC23)
+        write_amount_digits(ws21, 23, 29, 6)
+        
+        # Строка 121 - налоговая ставка за полугодие (AC25)
+        write_amount_digits(ws21, 25, 29, 6)
+        
+        # Строка 122 - не заполняется (AC27)
+        
+        # Строка 123 - налоговая ставка за год (AC29)
+        write_amount_digits(ws21, 29, 29, 6)
+        
+        # Строка 124 - обоснование ставки (AC31) - ставим "/"
+        write_letter(ws21, 31, 29, '/')
         
         # Строка 130 - налог за 1 квартал (AC34)
         write_amount_digits(ws21, 34, 29, cum_tax[1])

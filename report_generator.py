@@ -19,8 +19,8 @@ def get_merge_start(ws, row, col):
             return merged.min_row, merged.min_col
     return row, col
 
-def safe_write(ws, row, col, value, as_text=False, font_size=16, font_name='Courier New'):
-    """Безопасная запись с установкой шрифта"""
+def safe_write(ws, row, col, value, as_text=False):
+    """Безопасная запись"""
     if value is None:
         return
     target_row, target_col = get_merge_start(ws, row, col)
@@ -29,25 +29,22 @@ def safe_write(ws, row, col, value, as_text=False, font_size=16, font_name='Cour
         cell.value = str(int(value))
     else:
         cell.value = value
-    cell.font = Font(name=font_name, size=font_size)
 
-def write_digit(ws, row, col, digit, font_size=16, font_name='Courier New'):
+def write_digit(ws, row, col, digit):
     """Запись одной цифры"""
     if digit is None:
         return
     target_row, target_col = get_merge_start(ws, row, col)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = str(int(digit))
-    cell.font = Font(name=font_name, size=font_size)
 
-def write_letter(ws, row, col, letter, font_size=16, font_name='Courier New'):
+def write_letter(ws, row, col, letter):
     """Запись одной буквы"""
     if not letter:
         return
     target_row, target_col = get_merge_start(ws, row, col)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = letter
-    cell.font = Font(name=font_name, size=font_size)
 
 def write_oktmo_digits(ws, row, start_col, oktmo):
     """Запись ОКТМО (8 цифр) последовательно в ячейки"""
@@ -66,7 +63,6 @@ def write_amount_digits(ws, row, start_col, amount):
 def write_phone_by_letters(ws, phone):
     """Телефон: U27, W27, Y27, AA27, AC27, AE27, AG27, AI27, AK27, AM27, AO27"""
     phone_digits = ''.join(ch for ch in str(phone) if ch.isdigit())
-    # U=21, W=23, Y=25, AA=27, AC=29, AE=31, AG=33, AI=35, AK=37, AM=39, AO=41
     columns = [21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41]
     for i, digit in enumerate(phone_digits[:11]):
         if i < len(columns):
@@ -192,18 +188,10 @@ def write_report_year(ws, year):
             write_digit(ws, 11, columns[i], int(digit))
 
 def write_director_last_name_titul(ws, last_name):
-    """Фамилия директора в H50 на листе Титул (особый шрифт)"""
+    """Фамилия директора в H50 на листе Титул (шрифт не меняем)"""
     target_row, target_col = get_merge_start(ws, 50, 8)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = last_name.upper()
-    # Не меняем шрифт, оставляем как в шаблоне
-
-def write_director_last_name_section11(ws, last_name):
-    """Фамилия директора в J50 на листе Раздел 1.1 (особый шрифт)"""
-    target_row, target_col = get_merge_start(ws, 50, 10)
-    cell = ws.cell(row=target_row, column=target_col)
-    cell.value = last_name.upper()
-    # Не меняем шрифт, оставляем как в шаблоне
 
 def write_signature_date_titul(ws):
     """Дата подписи на листе Титул: V50, X50, AB50, AD50, AH50, AJ50, AL50, AN50"""
@@ -212,28 +200,29 @@ def write_signature_date_titul(ws):
     month = str(today.month).zfill(2)
     year = str(today.year)
     
-    # День: V50 (22), X50 (24)
     write_digit(ws, 50, 22, int(day[0]))
     write_digit(ws, 50, 24, int(day[1]))
-    
-    # Месяц: AB50 (28), AD50 (30)
     write_digit(ws, 50, 28, int(month[0]))
     write_digit(ws, 50, 30, int(month[1]))
-    
-    # Год: AH50 (34), AJ50 (36), AL50 (38), AN50 (40)
     write_digit(ws, 50, 34, int(year[0]))
     write_digit(ws, 50, 36, int(year[1]))
     write_digit(ws, 50, 38, int(year[2]))
     write_digit(ws, 50, 40, int(year[3]))
 
+def write_director_last_name_section11(ws, last_name):
+    """Фамилия директора в J50 на листе Раздел 1.1 (шрифт не меняем)"""
+    target_row, target_col = get_merge_start(ws, 50, 10)
+    cell = ws.cell(row=target_row, column=target_col)
+    cell.value = last_name.upper()
+
 def write_signature_date_section11(ws):
-    """Дата подписи на листе Раздел 1.1: V50 целиком в формате ДД.ММ.ГГГГ"""
+    """Дата подписи на листе Раздел 1.1: V50 целиком в формате ДД.ММ.ГГГГ (шрифт не меняем)"""
     today = datetime.now()
     date_str = today.strftime('%d.%m.%Y')
     target_row, target_col = get_merge_start(ws, 50, 22)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = date_str
-    cell.font = Font(name='Courier New', size=16)
+
 
 def fill_declaration_template(operations, ens_data, template_path, output_excel, output_xml, inn, fio, oktmo, okved, phone):
     wb = load_workbook(template_path)
@@ -265,7 +254,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     # Название юрлица по буквам
     write_legal_name_by_letters(ws_titul, f"ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ {fio}")
     
-    # Телефон (U27, W27, Y27...)
+    # Телефон
     if phone:
         write_phone_by_letters(ws_titul, phone)
     
@@ -286,7 +275,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     if patronymic:
         write_patronymic_by_letters(ws_titul, patronymic)
     
-    # Фамилия директора в H50 (особый шрифт)
+    # Фамилия директора в H50
     write_director_last_name_titul(ws_titul, last_name)
     
     # Дата подписи на Титуле
@@ -298,7 +287,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     
     ws_s11 = wb["Раздел 1.1"]
     
-    # ИНН на Разделе 1.1
+    # ИНН
     write_inn_digit_by_digit_section11(ws_s11, inn)
     
     # ОКТМО строка 010 (Z13 - AG13)
@@ -313,10 +302,10 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     # ОКТМО строка 090 (Z34 - AG34)
     write_oktmo_digits(ws_s11, 34, 26, oktmo)
     
-    # Фамилия директора в J50 (особый шрифт)
+    # Фамилия директора в J50
     write_director_last_name_section11(ws_s11, last_name)
     
-    # Дата подписи в V50 (целиком)
+    # Дата подписи в V50
     write_signature_date_section11(ws_s11)
     
     # Расчет доходов по кварталам
@@ -368,8 +357,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     else:
         write_digit(ws_s11, 20, 26, 0)
     
-    # Строка 050 - аванс к уменьшению (Z23)
-    # Так как авансов не было, ставим 0
+    # Строка 050 - аванс к уменьшению за полугодие (Z23)
     write_digit(ws_s11, 23, 26, 0)
     
     # Строка 070 - аванс за 9 месяцев (Z22)
@@ -378,8 +366,8 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     else:
         write_digit(ws_s11, 22, 26, 0)
     
-    # Строка 080 - аванс к уменьшению за 9 месяцев (Z24)
-    write_digit(ws_s11, 24, 26, 0)
+    # Строка 080 - аванс к уменьшению за 9 месяцев (Z31)
+    write_digit(ws_s11, 31, 26, 0)
     
     # Строка 100 - налог к уплате (Z30)
     if tax_payable > 0:

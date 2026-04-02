@@ -3,6 +3,7 @@ import warnings
 from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string
+from openpyxl.styles import Font
 
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
@@ -18,8 +19,8 @@ def get_merge_start(ws, row, col):
             return merged.min_row, merged.min_col
     return row, col
 
-def safe_write(ws, row, col, value, as_text=False):
-    """Безопасная запись - НЕ меняем шрифт"""
+def safe_write(ws, row, col, value, as_text=False, font_size=16, font_name='Courier New'):
+    """Безопасная запись с установкой шрифта"""
     if value is None:
         return
     target_row, target_col = get_merge_start(ws, row, col)
@@ -28,22 +29,25 @@ def safe_write(ws, row, col, value, as_text=False):
         cell.value = str(int(value))
     else:
         cell.value = value
+    cell.font = Font(name=font_name, size=font_size)
 
-def write_digit(ws, row, col, digit):
+def write_digit(ws, row, col, digit, font_size=16, font_name='Courier New'):
     """Запись одной цифры"""
     if digit is None:
         return
     target_row, target_col = get_merge_start(ws, row, col)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = str(int(digit))
+    cell.font = Font(name=font_name, size=font_size)
 
-def write_letter(ws, row, col, letter):
+def write_letter(ws, row, col, letter, font_size=16, font_name='Courier New'):
     """Запись одной буквы"""
     if not letter:
         return
     target_row, target_col = get_merge_start(ws, row, col)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = letter
+    cell.font = Font(name=font_name, size=font_size)
 
 def write_oktmo_digits(ws, row, start_col, oktmo):
     """Запись ОКТМО (8 цифр) последовательно в ячейки"""
@@ -60,12 +64,13 @@ def write_amount_digits(ws, row, start_col, amount):
             write_digit(ws, row, start_col + i, int(digit))
 
 def write_phone_by_letters(ws, phone):
-    """Телефон: R29, T29, V29, X29, Z29, AB29, AD29, AF29, AH29, AJ29, AL29"""
+    """Телефон: U27, W27, Y27, AA27, AC27, AE27, AG27, AI27, AK27, AM27, AO27"""
     phone_digits = ''.join(ch for ch in str(phone) if ch.isdigit())
-    columns = [18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38]
+    # U=21, W=23, Y=25, AA=27, AC=29, AE=31, AG=33, AI=35, AK=37, AM=39, AO=41
+    columns = [21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41]
     for i, digit in enumerate(phone_digits[:11]):
         if i < len(columns):
-            write_digit(ws, 29, columns[i], int(digit))
+            write_digit(ws, 27, columns[i], int(digit))
 
 def write_legal_name_by_letters(ws, name):
     """Название юрлица по буквам: A15, C15, E15..."""
@@ -186,25 +191,49 @@ def write_report_year(ws, year):
         if i < len(columns):
             write_digit(ws, 11, columns[i], int(digit))
 
-def write_director_last_name_section11(ws, last_name):
-    """Фамилия директора в J50 на листе Раздел 1.1"""
-    write_letter(ws, 50, 10, last_name.upper())
+def write_director_last_name_titul(ws, last_name):
+    """Фамилия директора в H50 на листе Титул (особый шрифт)"""
+    target_row, target_col = get_merge_start(ws, 50, 8)
+    cell = ws.cell(row=target_row, column=target_col)
+    cell.value = last_name.upper()
+    # Не меняем шрифт, оставляем как в шаблоне
 
-def write_signature_date_section11(ws):
-    """Дата подписи: V50 на листе Раздел 1.1 в формате ДД.ММ.ГГГГ"""
-    today = datetime.now()
-    date_str = today.strftime('%d.%m.%Y')
-    col = 22
-    for char in date_str:
-        write_letter(ws, 50, col, char)
-        col += 1
+def write_director_last_name_section11(ws, last_name):
+    """Фамилия директора в J50 на листе Раздел 1.1 (особый шрифт)"""
+    target_row, target_col = get_merge_start(ws, 50, 10)
+    cell = ws.cell(row=target_row, column=target_col)
+    cell.value = last_name.upper()
+    # Не меняем шрифт, оставляем как в шаблоне
 
 def write_signature_date_titul(ws):
-    """Дата подписи на листе Титул"""
+    """Дата подписи на листе Титул: V50, X50, AB50, AD50, AH50, AJ50, AL50, AN50"""
+    today = datetime.now()
+    day = str(today.day).zfill(2)
+    month = str(today.month).zfill(2)
+    year = str(today.year)
+    
+    # День: V50 (22), X50 (24)
+    write_digit(ws, 50, 22, int(day[0]))
+    write_digit(ws, 50, 24, int(day[1]))
+    
+    # Месяц: AB50 (28), AD50 (30)
+    write_digit(ws, 50, 28, int(month[0]))
+    write_digit(ws, 50, 30, int(month[1]))
+    
+    # Год: AH50 (34), AJ50 (36), AL50 (38), AN50 (40)
+    write_digit(ws, 50, 34, int(year[0]))
+    write_digit(ws, 50, 36, int(year[1]))
+    write_digit(ws, 50, 38, int(year[2]))
+    write_digit(ws, 50, 40, int(year[3]))
+
+def write_signature_date_section11(ws):
+    """Дата подписи на листе Раздел 1.1: V50 целиком в формате ДД.ММ.ГГГГ"""
     today = datetime.now()
     date_str = today.strftime('%d.%m.%Y')
-    # Адреса по вашему шаблону
-    pass  # Заполним позже
+    target_row, target_col = get_merge_start(ws, 50, 22)
+    cell = ws.cell(row=target_row, column=target_col)
+    cell.value = date_str
+    cell.font = Font(name='Courier New', size=16)
 
 def fill_declaration_template(operations, ens_data, template_path, output_excel, output_xml, inn, fio, oktmo, okved, phone):
     wb = load_workbook(template_path)
@@ -236,7 +265,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     # Название юрлица по буквам
     write_legal_name_by_letters(ws_titul, f"ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ {fio}")
     
-    # Телефон
+    # Телефон (U27, W27, Y27...)
     if phone:
         write_phone_by_letters(ws_titul, phone)
     
@@ -256,6 +285,12 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         write_first_name_by_letters(ws_titul, first_name)
     if patronymic:
         write_patronymic_by_letters(ws_titul, patronymic)
+    
+    # Фамилия директора в H50 (особый шрифт)
+    write_director_last_name_titul(ws_titul, last_name)
+    
+    # Дата подписи на Титуле
+    write_signature_date_titul(ws_titul)
     
     # ========== ЛИСТ "Раздел 1.1" ==========
     if "Раздел 1.1" not in wb.sheetnames:
@@ -278,10 +313,10 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     # ОКТМО строка 090 (Z34 - AG34)
     write_oktmo_digits(ws_s11, 34, 26, oktmo)
     
-    # Фамилия директора в J50
+    # Фамилия директора в J50 (особый шрифт)
     write_director_last_name_section11(ws_s11, last_name)
     
-    # Дата подписи в V50
+    # Дата подписи в V50 (целиком)
     write_signature_date_section11(ws_s11)
     
     # Расчет доходов по кварталам
@@ -333,17 +368,30 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     else:
         write_digit(ws_s11, 20, 26, 0)
     
+    # Строка 050 - аванс к уменьшению (Z23)
+    # Так как авансов не было, ставим 0
+    write_digit(ws_s11, 23, 26, 0)
+    
     # Строка 070 - аванс за 9 месяцев (Z22)
     if advance_payments[3] > 0:
         write_amount_digits(ws_s11, 22, 26, advance_payments[3])
     else:
         write_digit(ws_s11, 22, 26, 0)
     
+    # Строка 080 - аванс к уменьшению за 9 месяцев (Z24)
+    write_digit(ws_s11, 24, 26, 0)
+    
     # Строка 100 - налог к уплате (Z30)
     if tax_payable > 0:
         write_amount_digits(ws_s11, 30, 26, tax_payable)
     else:
         write_digit(ws_s11, 30, 26, 0)
+    
+    # Строка 110 - налог к уменьшению (Z32)
+    if tax_payable < 0:
+        write_amount_digits(ws_s11, 32, 26, abs(tax_payable))
+    else:
+        write_digit(ws_s11, 32, 26, 0)
     
     # ========== ЛИСТ "Раздел 2.1.1" ==========
     if "Раздел 2.1.1" in wb.sheetnames:

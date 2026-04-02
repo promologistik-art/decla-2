@@ -57,23 +57,34 @@ def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_acc
 # ========== ДЕКЛАРАЦИЯ ==========
 
 def write_inn_digit_by_digit_declaration(ws, inn):
+    """Заполнение ИНН: колонки Y1, AA1, AC1, AE1, AG1, AI1, AK1, AM1, AO1, AQ1, AS1, AU1"""
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
-    # Колонки для ИНН в строке 2 на листе "Титул"
-    columns = [40, 44, 48, 52, 56, 60, 64, 68, 72, 76, 80, 84]
+    # Колонки: Y(25), AA(27), AC(29), AE(31), AG(33), AI(35), AK(37), AM(39), AO(41), AQ(43), AS(45), AU(47)
+    columns = [25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47]
     for i, digit in enumerate(inn_str):
         if i < len(columns):
-            safe_write(ws, 2, columns[i], int(digit))
+            safe_write(ws, 1, columns[i], int(digit))
 
-def write_kpp_digit_by_digit(ws, kpp):
-    kpp_str = ''.join(ch for ch in str(kpp) if ch.isdigit())
-    columns = [40, 44, 48, 52, 56, 60, 64, 68, 72]
-    for i, digit in enumerate(kpp_str):
+def write_tax_office_code(ws, inn):
+    """Заполнение кода налогового органа (первые 4 цифры ИНН)"""
+    inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
+    tax_code = inn_str[:4]  # Первые 4 цифры ИНН - код налоговой
+    # Колонки: AA(27), AC(29), AE(31), AG(33)
+    columns = [27, 29, 31, 33]
+    for i, digit in enumerate(tax_code):
         if i < len(columns):
-            safe_write(ws, 4, columns[i], int(digit))
+            safe_write(ws, 13, columns[i], int(digit))
+
+def write_phone_digit_by_digit(ws, phone):
+    """Заполнение телефона цифра за цифрой"""
+    phone_digits = ''.join(ch for ch in str(phone) if ch.isdigit())
+    # Телефон в строке 43, начиная с колонки AZ (52)
+    for i, digit in enumerate(phone_digits[:11]):
+        safe_write(ws, 43, 52 + i, int(digit))
 
 def write_okved_digit_by_digit(ws, okved):
     okved_str = ''.join(ch for ch in str(okved) if ch.isdigit())
-    # ОКВЭД в строке 27 на листе "Титул"
+    # ОКВЭД в строке 27, колонки: 74, 78, 86, 90, 98, 102
     columns = [74, 78, 86, 90, 98, 102]
     for i, digit in enumerate(okved_str):
         if i < len(columns):
@@ -81,7 +92,7 @@ def write_okved_digit_by_digit(ws, okved):
 
 def write_year_digits(ws, year):
     year_str = str(year)
-    # Год в строке 14 на листе "Титул", колонки 114, 118, 122, 126
+    # Год в строке 14, колонки: 114, 118, 122, 126
     columns = [114, 118, 122, 126]
     for i, digit in enumerate(year_str):
         if i < len(columns):
@@ -96,31 +107,51 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     
     ws = wb["Титул"]
     
-    # ИНН
+    # 1. ИНН (строки 1-2, колонки через одну)
     write_inn_digit_by_digit_declaration(ws, inn)
     
-    # Год
-    write_year_digits(ws, 2025)
+    # 2. КПП для ИП не заполняем
     
-    # Номер корректировки (0 - первичная) - строка 14, колонка 18 (R)
+    # 3. Код налогового органа (строка 13, колонки AA, AC, AE, AG)
+    write_tax_office_code(ws, inn)
+    
+    # 4. По месту учета (код) - для ИП это 120 (строка 13, колонка AY = 51)
+    safe_write(ws, 13, 51, 1)  # сотня
+    safe_write(ws, 13, 52, 2)  # двадцать
+    safe_write(ws, 13, 53, 0)  # ноль
+    
+    # 5. Номер корректировки (0 - первичная) - строка 14, колонка 18 (R)
     safe_write(ws, 14, 18, 0)
     
-    # Телефон (строка 43, колонка AZ = 52)
-    if phone:
-        phone_digits = ''.join(ch for ch in phone if ch.isdigit())
-        # Записываем телефон цифра за цифрой
-        for i, digit in enumerate(phone_digits[:11]):
-            safe_write(ws, 43, 52 + i, int(digit))
+    # 6. Налоговый период (код) - 34 (год) - строка 14, колонки: 54, 58, 62, 66
+    safe_write(ws, 14, 54, 3)
+    safe_write(ws, 14, 58, 4)
     
-    # ФИО в строке 20 (колонка C = 3)
+    # 7. Отчетный год
+    write_year_digits(ws, 2025)
+    
+    # 8. Телефон (строка 43, колонка AZ)
+    if phone:
+        write_phone_digit_by_digit(ws, phone)
+    
+    # 9. ФИО налогоплательщика (строка 20, колонка C)
     safe_write(ws, 20, 3, fio)
     
-    # ФИО в строке 50 (колонка U = 21)
+    # 10. ФИО в разделе подписи (строка 50, колонка U)
     safe_write(ws, 50, 21, fio)
     
-    # ОКВЭД
+    # 11. Дата подписи (строка 50, колонки)
+    today = datetime.now()
+    safe_write(ws, 50, 58, today.day)
+    safe_write(ws, 50, 60, today.month)
+    safe_write(ws, 50, 64, today.year)
+    
+    # 12. ОКВЭД
     if okved:
         write_okved_digit_by_digit(ws, okved)
+    
+    # 13. Объект налогообложения (строка 20, колонка AJ = 36) - 1 = доходы
+    safe_write(ws, 20, 36, 1)
     
     # Расчет доходов по кварталам
     quarterly = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
@@ -130,7 +161,17 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     
     total_income = sum(quarterly.values())
     tax_rate = 6
-    tax_amount = total_income * tax_rate / 100
+    
+    # Накопленные доходы
+    cum_income = {
+        1: quarterly[1],
+        2: quarterly[1] + quarterly[2],
+        3: quarterly[1] + quarterly[2] + quarterly[3],
+        4: total_income
+    }
+    
+    # Накопленный налог
+    cum_tax = {i: cum_income[i] * tax_rate / 100 for i in range(1, 5)}
     
     # Авансовые платежи из ЕНС
     usn_payments = ens_data.get('usn_payments', [])
@@ -149,24 +190,13 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     paid_in_2025 = any(d.year == 2025 for d in ens_data.get('insurance_paid_dates', []))
     insurance_paid = ens_data.get('insurance_paid', 0) if paid_in_2025 else 0
     
-    # Накопленные доходы
-    cum_income = {
-        1: quarterly[1],
-        2: quarterly[1] + quarterly[2],
-        3: quarterly[1] + quarterly[2] + quarterly[3],
-        4: total_income
-    }
-    
-    # Накопленный налог
-    cum_tax = {i: cum_income[i] * tax_rate / 100 for i in range(1, 5)}
-    
     # Накопленный вычет (не более налога)
     cum_deductible = {i: min(cum_tax[i], insurance_paid) for i in range(1, 5)} if paid_in_2025 else {i: 0 for i in range(1, 5)}
     
     # Налог к уплате
     tax_payable = max(0, cum_tax[4] - cum_deductible[4] - advance_payments[1] - advance_payments[2] - advance_payments[3])
     
-    # Заполнение раздела 2.1.1 (лист "Раздел 2.1.1")
+    # Заполнение раздела 2.1.1
     if "Раздел 2.1.1" not in wb.sheetnames:
         raise Exception(f"Лист 'Раздел 2.1.1' не найден. Доступные листы: {wb.sheetnames}")
     
@@ -200,13 +230,13 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     safe_write(ws21_cont, 16, 39, format_currency(cum_deductible[3]))   # стр 142
     safe_write(ws21_cont, 18, 39, format_currency(cum_deductible[4]))   # стр 143
     
-    # Заполнение раздела 1.1 (лист "Раздел 1.1")
+    # Заполнение раздела 1.1
     if "Раздел 1.1" not in wb.sheetnames:
         raise Exception(f"Лист 'Раздел 1.1' не найден. Доступные листы: {wb.sheetnames}")
     
     ws11 = wb["Раздел 1.1"]
     
-    # ОКТМО (строка 010)
+    # ОКТМО (строка 010) - берем из ЕНС или используем значение по умолчанию
     safe_write(ws11, 22, 39, oktmo)
     
     # Авансовые платежи

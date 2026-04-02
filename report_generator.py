@@ -12,19 +12,20 @@ def format_currency(amount):
         return int(amount)
     return round(amount, 2)
 
-def safe_write(ws, row, col, value, as_text=False):
-    if value is None:
-        return
+def get_merge_start(ws, row, col):
+    """Возвращает координаты верхней левой ячейки объединения, если ячейка объединена"""
     for merged in ws.merged_cells.ranges:
         if merged.min_row <= row <= merged.max_row and merged.min_col <= col <= merged.max_col:
-            cell = ws.cell(row=merged.min_row, column=merged.min_col)
-            if as_text and isinstance(value, (int, float)):
-                cell.value = str(int(value))
-            else:
-                cell.value = value
-            cell.font = Font(name='Courier New')
-            return
-    cell = ws.cell(row=row, column=col)
+            return merged.min_row, merged.min_col
+    return row, col
+
+def safe_write(ws, row, col, value, as_text=False):
+    """Безопасная запись с учетом объединенных ячеек"""
+    if value is None:
+        return
+    # Находим главную ячейку объединения
+    target_row, target_col = get_merge_start(ws, row, col)
+    cell = ws.cell(row=target_row, column=target_col)
     if as_text and isinstance(value, (int, float)):
         cell.value = str(int(value))
     else:
@@ -32,11 +33,21 @@ def safe_write(ws, row, col, value, as_text=False):
     cell.font = Font(name='Courier New')
 
 def write_digit(ws, row, col, digit):
-    """Запись одной цифры в ячейку (первая колонка объединенной ячейки)"""
+    """Запись одной цифры с учетом объединенных ячеек"""
     if digit is None:
         return
-    cell = ws.cell(row=row, column=col)
+    target_row, target_col = get_merge_start(ws, row, col)
+    cell = ws.cell(row=target_row, column=target_col)
     cell.value = str(int(digit))
+    cell.font = Font(name='Courier New')
+
+def write_letter(ws, row, col, letter):
+    """Запись одной буквы с учетом объединенных ячеек"""
+    if not letter:
+        return
+    target_row, target_col = get_merge_start(ws, row, col)
+    cell = ws.cell(row=target_row, column=target_col)
+    cell.value = letter
     cell.font = Font(name='Courier New')
 
 
@@ -126,72 +137,53 @@ def write_legal_name_by_letters(ws, name):
         if col > 79:  # CA = 79
             row = 17
             col = 1
-        cell = ws.cell(row=row, column=col)
-        cell.value = char
-        cell.font = Font(name='Courier New')
+        write_letter(ws, row, col, char)
         col += 2
 
 def write_phone_by_letters(ws, phone):
     """Телефон: U27, W27, Y27, AA27, AC27, AE27, AG27, AI27, AK27, AM27, AO27"""
     phone_digits = ''.join(ch for ch in str(phone) if ch.isdigit())
-    columns = [21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41]  # U, W, Y, AA, AC, AE, AG, AI, AK, AM, AO
+    columns = [21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41]
     for i, digit in enumerate(phone_digits[:11]):
         if i < len(columns):
             write_digit(ws, 27, columns[i], int(digit))
 
 def write_last_name_by_letters(ws, last_name):
-    """Фамилия: B43, D43, F43, H43, J43, L43, N43, P43, R43, T43, V43, X43, Z43, AB43, AD43, AF43, AH43, AJ43, AL43, AN43, AP43, AR43, AT43, AV43, AX43, AZ43, BB43, BD43, BF43, BH43, BJ43, BL43, BN43, BP43, BR43, BT43, BV43, BX43, BZ43, CB43, CD43, CF43, CH43, CJ43, CL43, CN43, CP43, CR43, CT43, CV43, CX43, CZ43, DB43, DD43, DF43, DH43, DJ43, DL43, DN43, DP43, DR43, DT43, DV43, DX43, DZ43"""
+    """Фамилия: B43, D43, F43, H43, J43, L43, N43, P43, R43, T43, V43, X43, Z43, AB43..."""
     col = 2  # B
     for char in last_name.upper():
-        cell = ws.cell(row=43, column=col)
-        cell.value = char
-        cell.font = Font(name='Courier New')
+        write_letter(ws, 43, col, char)
         col += 2
 
 def write_first_name_by_letters(ws, first_name):
     """Имя: B45, D45, F45..."""
     col = 2
     for char in first_name.upper():
-        cell = ws.cell(row=45, column=col)
-        cell.value = char
-        cell.font = Font(name='Courier New')
+        write_letter(ws, 45, col, char)
         col += 2
 
 def write_patronymic_by_letters(ws, patronymic):
     """Отчество: B47, D47, F47..."""
     col = 2
     for char in patronymic.upper():
-        cell = ws.cell(row=47, column=col)
-        cell.value = char
-        cell.font = Font(name='Courier New')
+        write_letter(ws, 47, col, char)
         col += 2
 
 def write_signature_last_name(ws, last_name):
     """Фамилия подписанта: H50"""
-    cell = ws.cell(row=50, column=8)  # H = 8
-    cell.value = last_name.upper()
-    cell.font = Font(name='Courier New')
+    write_letter(ws, 50, 8, last_name.upper())
 
 def write_signature_date(ws):
-    """Дата подписи:
-       День: V50 (22), X50 (24)
-       Месяц: AB50 (28), AD50 (30)
-       Год: AH50 (34), AJ50 (36), AL50 (38), AN50 (40)
-    """
+    """Дата подписи: день V50,X50, месяц AB50,AD50, год AH50,AJ50,AL50,AN50"""
     today = datetime.now()
     day = str(today.day).zfill(2)
     month = str(today.month).zfill(2)
     year = str(today.year)
     
-    # День
     write_digit(ws, 50, 22, int(day[0]))  # V
     write_digit(ws, 50, 24, int(day[1]))  # X
-    
-    # Месяц
     write_digit(ws, 50, 28, int(month[0]))  # AB
     write_digit(ws, 50, 30, int(month[1]))  # AD
-    
-    # Год
     write_digit(ws, 50, 34, int(year[0]))  # AH
     write_digit(ws, 50, 36, int(year[1]))  # AJ
     write_digit(ws, 50, 38, int(year[2]))  # AL
@@ -231,7 +223,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         write_phone_by_letters(ws, phone)
     
     # 9. Объект налогообложения (1 = доходы)
-    write_digit(ws, 20, 36, 1)  # AJ = 36
+    write_digit(ws, 20, 36, 1)
     
     # 10. Разбор ФИО
     fio_parts = fio.split()

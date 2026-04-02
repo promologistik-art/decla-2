@@ -360,26 +360,26 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     # Строка 050 - аванс к уменьшению за полугодие (Z23)
     write_digit(ws_s11, 23, 26, 0)
     
-    # Строка 070 - аванс за 9 месяцев (Z22)
-    if advance_payments[3] > 0:
-        write_amount_digits(ws_s11, 22, 26, advance_payments[3])
-    else:
-        write_digit(ws_s11, 22, 26, 0)
-    
-    # Строка 080 - аванс к уменьшению за 9 месяцев (Z31)
-    write_digit(ws_s11, 31, 26, 0)
-    
-    # Строка 100 - налог к уплате (Z30)
-    if tax_payable > 0:
-        write_amount_digits(ws_s11, 30, 26, tax_payable)
-    else:
-        write_digit(ws_s11, 30, 26, 0)
-    
-    # Строка 110 - налог к уменьшению (Z32)
-    if tax_payable < 0:
-        write_amount_digits(ws_s11, 32, 26, abs(tax_payable))
-    else:
-        write_digit(ws_s11, 32, 26, 0)
+    # Строка 070 - аванс за 9 месяцев (Z28)
+if advance_payments[3] > 0:
+    write_amount_digits(ws_s11, 28, 26, advance_payments[3])
+else:
+    write_digit(ws_s11, 28, 26, 0)
+
+# Строка 080 - аванс к уменьшению за 9 месяцев (Z31)
+write_digit(ws_s11, 31, 26, 0)
+
+# Строка 100 - налог к уплате (Z36)
+if tax_payable > 0:
+    write_amount_digits(ws_s11, 36, 26, tax_payable)
+else:
+    write_digit(ws_s11, 36, 26, 0)
+
+# Строка 110 - налог к уменьшению (Z41)
+if tax_payable < 0:
+    write_amount_digits(ws_s11, 41, 26, abs(tax_payable))
+else:
+    write_digit(ws_s11, 41, 26, 0)
     
     # ========== ЛИСТ "Раздел 2.1.1" ==========
     if "Раздел 2.1.1" in wb.sheetnames:

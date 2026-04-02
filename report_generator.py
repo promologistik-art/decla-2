@@ -3,6 +3,7 @@ import warnings
 from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string
+from openpyxl.styles import Font
 
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
@@ -11,14 +12,32 @@ def format_currency(amount):
         return int(amount)
     return round(amount, 2)
 
-def safe_write(ws, row, col, value):
+def safe_write(ws, row, col, value, as_text=False):
     if value is None:
         return
     for merged in ws.merged_cells.ranges:
         if merged.min_row <= row <= merged.max_row and merged.min_col <= col <= merged.max_col:
-            ws.cell(row=merged.min_row, column=merged.min_col).value = value
+            cell = ws.cell(row=merged.min_row, column=merged.min_col)
+            if as_text and isinstance(value, (int, float)):
+                cell.value = str(int(value))
+            else:
+                cell.value = value
+            cell.font = Font(name='Courier New')
             return
-    ws.cell(row=row, column=col).value = value
+    cell = ws.cell(row=row, column=col)
+    if as_text and isinstance(value, (int, float)):
+        cell.value = str(int(value))
+    else:
+        cell.value = value
+    cell.font = Font(name='Courier New')
+
+def write_digit(ws, row, col, digit):
+    """Запись одной цифры в ячейку (первая колонка объединенной ячейки)"""
+    if digit is None:
+        return
+    cell = ws.cell(row=row, column=col)
+    cell.value = str(int(digit))
+    cell.font = Font(name='Courier New')
 
 
 # ========== КУДиР ==========
@@ -28,21 +47,21 @@ def write_inn_digit_by_digit_kudir(ws, inn):
     positions = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23]
     for i, digit in enumerate(inn_str):
         if i < len(positions):
-            safe_write(ws, 28, positions[i], int(digit))
+            write_digit(ws, 28, positions[i], int(digit))
 
 def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_accounts, year=2025):
     wb = load_workbook(template_path)
     ws1 = wb["Лист1"]
     
-    safe_write(ws1, 15, column_index_from_string('H'), year % 100)
+    safe_write(ws1, 15, column_index_from_string('H'), year % 100, as_text=True)
     safe_write(ws1, 18, column_index_from_string('V'), fio)
     write_inn_digit_by_digit_kudir(ws1, inn)
-    safe_write(ws1, 14, column_index_from_string('BB'), 1151085)
+    safe_write(ws1, 14, column_index_from_string('BB'), 1151085, as_text=True)
     
     today = datetime.now()
-    safe_write(ws1, 15, column_index_from_string('BB'), today.year)
-    safe_write(ws1, 15, column_index_from_string('BG'), today.month)
-    safe_write(ws1, 15, column_index_from_string('BJ'), today.day)
+    safe_write(ws1, 15, column_index_from_string('BB'), today.year, as_text=True)
+    safe_write(ws1, 15, column_index_from_string('BG'), today.month, as_text=True)
+    safe_write(ws1, 15, column_index_from_string('BJ'), today.day, as_text=True)
     safe_write(ws1, 30, column_index_from_string('P'), "Доходы")
     
     row = 38
@@ -57,121 +76,126 @@ def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_acc
 # ========== ДЕКЛАРАЦИЯ ==========
 
 def write_inn_digit_by_digit_declaration(ws, inn):
-    """Заполнение ИНН: колонки Y1, AA1, AC1, AE1, AG1, AI1, AK1, AM1, AO1, AQ1, AS1, AU1"""
+    """ИНН: Y1, AA1, AC1, AE1, AG1, AI1, AK1, AM1, AO1, AQ1, AS1, AU1"""
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
     columns = [25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47]
     for i, digit in enumerate(inn_str):
         if i < len(columns):
-            safe_write(ws, 1, columns[i], int(digit))
-
-def write_kpp_digit_by_digit_declaration(ws, kpp):
-    """Заполнение КПП для организации (для ИП не используется)"""
-    kpp_str = ''.join(ch for ch in str(kpp) if ch.isdigit())
-    columns = [25, 27, 29, 31, 33, 35, 37, 39, 41]
-    for i, digit in enumerate(kpp_str):
-        if i < len(columns):
-            safe_write(ws, 4, columns[i], int(digit))
+            write_digit(ws, 1, columns[i], int(digit))
 
 def write_tax_office_code(ws, inn):
-    """Заполнение кода налогового органа (первые 4 цифры ИНН) в ячейки AA13, AC13, AE13, AG13"""
+    """Код налогового органа (первые 4 цифры ИНН): AA13, AC13, AE13, AG13"""
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
     tax_code = inn_str[:4]
-    columns = [27, 29, 31, 33]  # AA, AC, AE, AG
+    columns = [27, 29, 31, 33]
     for i, digit in enumerate(tax_code):
         if i < len(columns):
-            safe_write(ws, 13, columns[i], int(digit))
+            write_digit(ws, 13, columns[i], int(digit))
 
 def write_place_of_registration_code(ws):
-    """Код по месту учета для ИП: 120 в ячейки BW13, BY13, CA13"""
-    # 1, 2, 0
-    safe_write(ws, 13, 75, 1)  # BW
-    safe_write(ws, 13, 77, 2)  # BY
-    safe_write(ws, 13, 79, 0)  # CA
+    """Код по месту учета 120: BW13, BY13, CA13"""
+    write_digit(ws, 13, 75, 1)  # BW
+    write_digit(ws, 13, 77, 2)  # BY
+    write_digit(ws, 13, 79, 0)  # CA
 
 def write_correction_number(ws):
-    """Номер корректировки в ячейку S11"""
-    safe_write(ws, 11, 19, 0)  # S = 19
+    """Номер корректировки 0: S11 (колонка 19)"""
+    write_digit(ws, 11, 19, 0)
 
 def write_tax_period_code(ws):
-    """Налоговый период (код) 34 в ячейки BA11, BC11"""
-    safe_write(ws, 11, 53, 3)  # BA = 53
-    safe_write(ws, 11, 55, 4)  # BC = 55
+    """Налоговый период 34: BA11 (53), BC11 (55)"""
+    write_digit(ws, 11, 53, 3)  # BA
+    write_digit(ws, 11, 55, 4)  # BC
 
 def write_report_year(ws, year):
-    """Отчетный год в ячейки BZ11, CB11, CD11, CF11 (2025)"""
+    """Отчетный год 2025: BZ11 (78), CB11 (80), CD11 (82), CF11 (84)"""
     year_str = str(year)
-    columns = [78, 80, 82, 84]  # BZ, CB, CD, CF
+    columns = [78, 80, 82, 84]
     for i, digit in enumerate(year_str):
         if i < len(columns):
-            safe_write(ws, 11, columns[i], int(digit))
+            write_digit(ws, 11, columns[i], int(digit))
 
 def write_legal_name_by_letters(ws, name):
-    """Заполнение полного названия юрлица по буквам с A15 через одну колонку до CA15, затем перенос на A17"""
-    name_clean = ''.join(ch for ch in name if ch.isalpha() or ch == ' ')
+    """Название юрлица по буквам: A15, C15, E15... до CA15, затем A17, C17..."""
+    name_clean = ''.join(ch for ch in name.upper() if ch.isalpha() or ch == ' ')
     row = 15
     col = 1  # A
     for char in name_clean:
         if char == ' ':
-            char = '_'
+            char = ' '
         if col > 79:  # CA = 79
             row = 17
             col = 1
-        safe_write(ws, row, col, char.upper())
+        cell = ws.cell(row=row, column=col)
+        cell.value = char
+        cell.font = Font(name='Courier New')
         col += 2
 
 def write_phone_by_letters(ws, phone):
-    """Заполнение номера телефона с U27 через одну колонку"""
+    """Телефон: U27, W27, Y27, AA27, AC27, AE27, AG27, AI27, AK27, AM27, AO27"""
     phone_digits = ''.join(ch for ch in str(phone) if ch.isdigit())
-    col = 21  # U
-    for digit in phone_digits[:11]:
-        safe_write(ws, 27, col, int(digit))
-        col += 2
+    columns = [21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41]  # U, W, Y, AA, AC, AE, AG, AI, AK, AM, AO
+    for i, digit in enumerate(phone_digits[:11]):
+        if i < len(columns):
+            write_digit(ws, 27, columns[i], int(digit))
 
 def write_last_name_by_letters(ws, last_name):
-    """Заполнение фамилии с B43 через одну колонку"""
+    """Фамилия: B43, D43, F43, H43, J43, L43, N43, P43, R43, T43, V43, X43, Z43, AB43, AD43, AF43, AH43, AJ43, AL43, AN43, AP43, AR43, AT43, AV43, AX43, AZ43, BB43, BD43, BF43, BH43, BJ43, BL43, BN43, BP43, BR43, BT43, BV43, BX43, BZ43, CB43, CD43, CF43, CH43, CJ43, CL43, CN43, CP43, CR43, CT43, CV43, CX43, CZ43, DB43, DD43, DF43, DH43, DJ43, DL43, DN43, DP43, DR43, DT43, DV43, DX43, DZ43"""
     col = 2  # B
     for char in last_name.upper():
-        safe_write(ws, 43, col, char)
+        cell = ws.cell(row=43, column=col)
+        cell.value = char
+        cell.font = Font(name='Courier New')
         col += 2
 
 def write_first_name_by_letters(ws, first_name):
-    """Заполнение имени с B45 через одну колонку"""
-    col = 2  # B
+    """Имя: B45, D45, F45..."""
+    col = 2
     for char in first_name.upper():
-        safe_write(ws, 45, col, char)
+        cell = ws.cell(row=45, column=col)
+        cell.value = char
+        cell.font = Font(name='Courier New')
         col += 2
 
 def write_patronymic_by_letters(ws, patronymic):
-    """Заполнение отчества с B47 через одну колонку"""
-    col = 2  # B
+    """Отчество: B47, D47, F47..."""
+    col = 2
     for char in patronymic.upper():
-        safe_write(ws, 47, col, char)
+        cell = ws.cell(row=47, column=col)
+        cell.value = char
+        cell.font = Font(name='Courier New')
         col += 2
 
 def write_signature_last_name(ws, last_name):
-    """Фамилия подписанта в ячейку H50"""
-    safe_write(ws, 50, 8, last_name.upper())  # H = 8
+    """Фамилия подписанта: H50"""
+    cell = ws.cell(row=50, column=8)  # H = 8
+    cell.value = last_name.upper()
+    cell.font = Font(name='Courier New')
 
 def write_signature_date(ws):
-    """Дата подписи: день в V50, X50, месяц в AB50, AD50, год в AH50, AJ50, AL50, AN50"""
+    """Дата подписи:
+       День: V50 (22), X50 (24)
+       Месяц: AB50 (28), AD50 (30)
+       Год: AH50 (34), AJ50 (36), AL50 (38), AN50 (40)
+    """
     today = datetime.now()
     day = str(today.day).zfill(2)
     month = str(today.month).zfill(2)
     year = str(today.year)
     
-    # День: V50 (22), X50 (24)
-    safe_write(ws, 50, 22, int(day[0]))
-    safe_write(ws, 50, 24, int(day[1]))
+    # День
+    write_digit(ws, 50, 22, int(day[0]))  # V
+    write_digit(ws, 50, 24, int(day[1]))  # X
     
-    # Месяц: AB50 (28), AD50 (30)
-    safe_write(ws, 50, 28, int(month[0]))
-    safe_write(ws, 50, 30, int(month[1]))
+    # Месяц
+    write_digit(ws, 50, 28, int(month[0]))  # AB
+    write_digit(ws, 50, 30, int(month[1]))  # AD
     
-    # Год: AH50 (34), AJ50 (36), AL50 (38), AN50 (40)
-    safe_write(ws, 50, 34, int(year[0]))
-    safe_write(ws, 50, 36, int(year[1]))
-    safe_write(ws, 50, 38, int(year[2]))
-    safe_write(ws, 50, 40, int(year[3]))
+    # Год
+    write_digit(ws, 50, 34, int(year[0]))  # AH
+    write_digit(ws, 50, 36, int(year[1]))  # AJ
+    write_digit(ws, 50, 38, int(year[2]))  # AL
+    write_digit(ws, 50, 40, int(year[3]))  # AN
 
 def fill_declaration_template(operations, ens_data, template_path, output_excel, output_xml, inn, fio, oktmo, okved, phone):
     wb = load_workbook(template_path)
@@ -184,55 +208,49 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     # 1. ИНН
     write_inn_digit_by_digit_declaration(ws, inn)
     
-    # 2. КПП - для ИП не заполняем (оставляем пустым)
-    
-    # 3. Код налогового органа (первые 4 цифры ИНН)
+    # 2. Код налогового органа
     write_tax_office_code(ws, inn)
     
-    # 4. Код по месту учета 120
+    # 3. Код по месту учета 120
     write_place_of_registration_code(ws)
     
-    # 5. Номер корректировки 0 в S11
+    # 4. Номер корректировки 0
     write_correction_number(ws)
     
-    # 6. Налоговый период 34 в BA11, BC11
+    # 5. Налоговый период 34
     write_tax_period_code(ws)
     
-    # 7. Отчетный год 2025
+    # 6. Отчетный год 2025
     write_report_year(ws, 2025)
     
-    # 8. Название юрлица по буквам
+    # 7. Название юрлица по буквам
     write_legal_name_by_letters(ws, f"ИНДИВИДУАЛЬНЫЙ ПРЕДПРИНИМАТЕЛЬ {fio}")
     
-    # 9. Телефон
+    # 8. Телефон
     if phone:
         write_phone_by_letters(ws, phone)
     
-    # 10. Объект налогообложения (1 = доходы) в AJ20
-    safe_write(ws, 20, 36, 1)  # AJ = 36
+    # 9. Объект налогообложения (1 = доходы)
+    write_digit(ws, 20, 36, 1)  # AJ = 36
     
-    # 11. Разбор ФИО
+    # 10. Разбор ФИО
     fio_parts = fio.split()
     last_name = fio_parts[0] if len(fio_parts) > 0 else ""
     first_name = fio_parts[1] if len(fio_parts) > 1 else ""
     patronymic = fio_parts[2] if len(fio_parts) > 2 else ""
     
-    # 12. Фамилия по буквам
+    # 11. Фамилия, имя, отчество по буквам
     if last_name:
         write_last_name_by_letters(ws, last_name)
-    
-    # 13. Имя по буквам
     if first_name:
         write_first_name_by_letters(ws, first_name)
-    
-    # 14. Отчество по буквам
     if patronymic:
         write_patronymic_by_letters(ws, patronymic)
     
-    # 15. Фамилия подписанта в H50
+    # 12. Фамилия подписанта
     write_signature_last_name(ws, last_name)
     
-    # 16. Дата подписи
+    # 13. Дата подписи
     write_signature_date(ws)
     
     # Расчет доходов по кварталам
@@ -272,36 +290,36 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     
     tax_payable = max(0, cum_tax[4] - cum_deductible[4] - advance_payments[1] - advance_payments[2] - advance_payments[3])
     
-    # Заполнение раздела 2.1.1
+    # Заполнение разделов
     if "Раздел 2.1.1" in wb.sheetnames:
         ws21 = wb["Раздел 2.1.1"]
-        safe_write(ws21, 34, 39, format_currency(cum_income[1]))
-        safe_write(ws21, 35, 39, format_currency(cum_income[2]))
-        safe_write(ws21, 36, 39, format_currency(cum_income[3]))
-        safe_write(ws21, 37, 39, format_currency(cum_income[4]))
-        safe_write(ws21, 41, 39, tax_rate)
-        safe_write(ws21, 42, 39, tax_rate)
-        safe_write(ws21, 43, 39, tax_rate)
-        safe_write(ws21, 44, 39, tax_rate)
-        safe_write(ws21, 50, 39, format_currency(cum_tax[1]))
-        safe_write(ws21, 51, 39, format_currency(cum_tax[2]))
-        safe_write(ws21, 52, 39, format_currency(cum_tax[3]))
-        safe_write(ws21, 53, 39, format_currency(cum_tax[4]))
+        safe_write(ws21, 34, 39, format_currency(cum_income[1]), as_text=True)
+        safe_write(ws21, 35, 39, format_currency(cum_income[2]), as_text=True)
+        safe_write(ws21, 36, 39, format_currency(cum_income[3]), as_text=True)
+        safe_write(ws21, 37, 39, format_currency(cum_income[4]), as_text=True)
+        safe_write(ws21, 41, 39, tax_rate, as_text=True)
+        safe_write(ws21, 42, 39, tax_rate, as_text=True)
+        safe_write(ws21, 43, 39, tax_rate, as_text=True)
+        safe_write(ws21, 44, 39, tax_rate, as_text=True)
+        safe_write(ws21, 50, 39, format_currency(cum_tax[1]), as_text=True)
+        safe_write(ws21, 51, 39, format_currency(cum_tax[2]), as_text=True)
+        safe_write(ws21, 52, 39, format_currency(cum_tax[3]), as_text=True)
+        safe_write(ws21, 53, 39, format_currency(cum_tax[4]), as_text=True)
     
     if "Раздел 2.1.1 (продолжение)" in wb.sheetnames:
         ws21_cont = wb["Раздел 2.1.1 (продолжение)"]
-        safe_write(ws21_cont, 12, 39, format_currency(cum_deductible[1]))
-        safe_write(ws21_cont, 14, 39, format_currency(cum_deductible[2]))
-        safe_write(ws21_cont, 16, 39, format_currency(cum_deductible[3]))
-        safe_write(ws21_cont, 18, 39, format_currency(cum_deductible[4]))
+        safe_write(ws21_cont, 12, 39, format_currency(cum_deductible[1]), as_text=True)
+        safe_write(ws21_cont, 14, 39, format_currency(cum_deductible[2]), as_text=True)
+        safe_write(ws21_cont, 16, 39, format_currency(cum_deductible[3]), as_text=True)
+        safe_write(ws21_cont, 18, 39, format_currency(cum_deductible[4]), as_text=True)
     
     if "Раздел 1.1" in wb.sheetnames:
         ws11 = wb["Раздел 1.1"]
         safe_write(ws11, 22, 39, oktmo)
-        safe_write(ws11, 28, 39, format_currency(advance_payments[1]))
-        safe_write(ws11, 38, 39, format_currency(advance_payments[2]))
-        safe_write(ws11, 54, 39, format_currency(advance_payments[3]))
-        safe_write(ws11, 70, 39, format_currency(tax_payable))
+        safe_write(ws11, 28, 39, format_currency(advance_payments[1]), as_text=True)
+        safe_write(ws11, 38, 39, format_currency(advance_payments[2]), as_text=True)
+        safe_write(ws11, 54, 39, format_currency(advance_payments[3]), as_text=True)
+        safe_write(ws11, 70, 39, format_currency(tax_payable), as_text=True)
     
     wb.save(output_excel)
     

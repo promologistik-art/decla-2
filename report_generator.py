@@ -58,24 +58,22 @@ def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_acc
 
 def write_inn_digit_by_digit_declaration(ws, inn):
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
-    # Колонки для ИНН в строке 2 (каждая цифра через пробел)
-    # B, F, J, N, R, V, Z, AD, AH, AL, AP, AT
-    columns = [2, 6, 10, 14, 18, 22, 26, 30, 34, 38, 42, 46]
+    # Колонки для ИНН в строке 2 на листе "Титул"
+    columns = [40, 44, 48, 52, 56, 60, 64, 68, 72, 76, 80, 84]
     for i, digit in enumerate(inn_str):
         if i < len(columns):
             safe_write(ws, 2, columns[i], int(digit))
 
 def write_kpp_digit_by_digit(ws, kpp):
     kpp_str = ''.join(ch for ch in str(kpp) if ch.isdigit())
-    columns = [2, 6, 10, 14, 18, 22, 26, 30, 34]
+    columns = [40, 44, 48, 52, 56, 60, 64, 68, 72]
     for i, digit in enumerate(kpp_str):
         if i < len(columns):
             safe_write(ws, 4, columns[i], int(digit))
 
 def write_okved_digit_by_digit(ws, okved):
     okved_str = ''.join(ch for ch in str(okved) if ch.isdigit())
-    # ОКВЭД в строке 27, колонки с какой-то позиции
-    # В шаблоне это колонки 74, 78, 86, 90, 98, 102
+    # ОКВЭД в строке 27 на листе "Титул"
     columns = [74, 78, 86, 90, 98, 102]
     for i, digit in enumerate(okved_str):
         if i < len(columns):
@@ -83,7 +81,7 @@ def write_okved_digit_by_digit(ws, okved):
 
 def write_year_digits(ws, year):
     year_str = str(year)
-    # Год в строке 14, колонки 114, 118, 122, 126
+    # Год в строке 14 на листе "Титул", колонки 114, 118, 122, 126
     columns = [114, 118, 122, 126]
     for i, digit in enumerate(year_str):
         if i < len(columns):
@@ -91,7 +89,12 @@ def write_year_digits(ws, year):
 
 def fill_declaration_template(operations, ens_data, template_path, output_excel, output_xml, inn, fio, oktmo, okved, phone):
     wb = load_workbook(template_path)
-    ws = wb["Титул"]  # Исправлено: правильное имя листа
+    
+    # Проверяем наличие листа "Титул"
+    if "Титул" not in wb.sheetnames:
+        raise Exception(f"Лист 'Титул' не найден в шаблоне. Доступные листы: {wb.sheetnames}")
+    
+    ws = wb["Титул"]
     
     # ИНН
     write_inn_digit_by_digit_declaration(ws, inn)
@@ -99,8 +102,8 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     # Год
     write_year_digits(ws, 2025)
     
-    # Номер корректировки (0 - первичная)
-    safe_write(ws, 14, 18, 0)  # Колонка R (18)
+    # Номер корректировки (0 - первичная) - строка 14, колонка 18 (R)
+    safe_write(ws, 14, 18, 0)
     
     # Телефон (строка 43, колонка AZ = 52)
     if phone:
@@ -163,35 +166,44 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     # Налог к уплате
     tax_payable = max(0, cum_tax[4] - cum_deductible[4] - advance_payments[1] - advance_payments[2] - advance_payments[3])
     
-    # Заполнение раздела 2.1.1 (лист Раздел 2.1.1)
+    # Заполнение раздела 2.1.1 (лист "Раздел 2.1.1")
+    if "Раздел 2.1.1" not in wb.sheetnames:
+        raise Exception(f"Лист 'Раздел 2.1.1' не найден. Доступные листы: {wb.sheetnames}")
+    
     ws21 = wb["Раздел 2.1.1"]
     
-    # Доходы
+    # Доходы (строки 110-113)
     safe_write(ws21, 34, 39, format_currency(cum_income[1]))   # стр 110
     safe_write(ws21, 35, 39, format_currency(cum_income[2]))   # стр 111
     safe_write(ws21, 36, 39, format_currency(cum_income[3]))   # стр 112
     safe_write(ws21, 37, 39, format_currency(cum_income[4]))   # стр 113
     
-    # Ставка
+    # Ставка (строки 120-123)
     safe_write(ws21, 41, 39, tax_rate)   # стр 120
     safe_write(ws21, 42, 39, tax_rate)   # стр 121
     safe_write(ws21, 43, 39, tax_rate)   # стр 122
     safe_write(ws21, 44, 39, tax_rate)   # стр 123
     
-    # Исчисленный налог
+    # Исчисленный налог (строки 130-133)
     safe_write(ws21, 50, 39, format_currency(cum_tax[1]))   # стр 130
     safe_write(ws21, 51, 39, format_currency(cum_tax[2]))   # стр 131
     safe_write(ws21, 52, 39, format_currency(cum_tax[3]))   # стр 132
     safe_write(ws21, 53, 39, format_currency(cum_tax[4]))   # стр 133
     
-    # Вычет по взносам (лист Раздел 2.1.1 (продолжение))
+    # Вычет по взносам (лист "Раздел 2.1.1 (продолжение)")
+    if "Раздел 2.1.1 (продолжение)" not in wb.sheetnames:
+        raise Exception(f"Лист 'Раздел 2.1.1 (продолжение)' не найден. Доступные листы: {wb.sheetnames}")
+    
     ws21_cont = wb["Раздел 2.1.1 (продолжение)"]
     safe_write(ws21_cont, 12, 39, format_currency(cum_deductible[1]))   # стр 140
     safe_write(ws21_cont, 14, 39, format_currency(cum_deductible[2]))   # стр 141
     safe_write(ws21_cont, 16, 39, format_currency(cum_deductible[3]))   # стр 142
     safe_write(ws21_cont, 18, 39, format_currency(cum_deductible[4]))   # стр 143
     
-    # Заполнение раздела 1.1
+    # Заполнение раздела 1.1 (лист "Раздел 1.1")
+    if "Раздел 1.1" not in wb.sheetnames:
+        raise Exception(f"Лист 'Раздел 1.1' не найден. Доступные листы: {wb.sheetnames}")
+    
     ws11 = wb["Раздел 1.1"]
     
     # ОКТМО (строка 010)

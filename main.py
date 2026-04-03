@@ -26,62 +26,21 @@ os.makedirs(TEMPLATES_DIR, exist_ok=True)
 user_sessions = {}
 
 
-class UserSession:
-    def __init__(self, user_id):
-        self.user_id = user_id
-        self.bank_operations = []
-        self.ens_data = {
-            'insurance_accrued': 0,
-            'insurance_paid': 0,
-            'insurance_paid_dates': [],
-            'penalties': 0,
-            'usn_payments': []
-        }
-        self.ens_loaded = False
-        self.inn = ""
-        self.fio = ""
-        self.oktmo = ""
-        self.ip_accounts = []
-        self.phone = ""
-        self.awaiting_phone = False
-
-    def add_bank_operations(self, operations, inn="", fio="", accounts=None):
-        self.bank_operations.extend(operations)
-        if inn and len(inn) >= 10 and inn.isdigit() and not self.inn:
-            self.inn = inn
-        if fio and len(fio) > 10 and not self.fio:
-            self.fio = fio
-        if accounts:
-            for acc in accounts:
-                if acc['number'] not in [a['number'] for a in self.ip_accounts]:
-                    self.ip_accounts.append(acc)
-
-    def set_ens_data(self, data):
-        self.ens_data = data
-        self.ens_loaded = True
-        if 'oktmo' in data and data['oktmo']:
-            self.oktmo = data['oktmo']
-
-    def reset(self):
-        self.bank_operations = []
-        self.ens_data = {
-            'insurance_accrued': 0,
-            'insurance_paid': 0,
-            'insurance_paid_dates': [],
-            'penalties': 0,
-            'usn_payments': []
-        }
-        self.ens_loaded = False
-        self.inn = ""
-        self.fio = ""
-        self.oktmo = ""
-        self.ip_accounts = []
-        self.phone = ""
-        self.awaiting_phone = False
+def is_valid_fio(fio):
+    """Проверяет, что строка похожа на ФИО (содержит буквы и не является номером счета)"""
+    if not fio:
+        return False
+    # ФИО должно содержать хотя бы одну русскую букву
+    has_cyrillic = any('\u0400' <= c <= '\u04FF' for c in fio)
+    # Не должно состоять только из цифр и пробелов
+    is_only_digits = all(c.isdigit() or c.isspace() for c in fio)
+    # Должно содержать хотя бы один пробел (разделение слов)
+    has_space = ' ' in fio
+    return has_cyrillic and not is_only_digits and has_space
 
 
-def detect_bank_name(filename):
-    """Определяет банк по имени файла"""
+def detect_bank_name(filename, df=None):
+    """Определяет банк по имени файла или содержимому"""
     name_lower = filename.lower()
     if 'ozon' in name_lower:
         return 'ОЗОН Банк'
@@ -95,6 +54,68 @@ def detect_bank_name(filename):
         return 'Альфа-Банк'
     else:
         return 'Банк'
+
+
+class UserSession:
+    def __init__(self, user_id):
+        self.user_id = user_id
+        self.bank_operations = []
+        self.bank_files = []
+        self.ens_data = {
+            'insurance_accrued': 0,
+            'insurance_paid': 0,
+            'insurance_paid_dates': [],
+            'penalties': 0,
+            'usn_payments': []
+        }
+        self.ens_loaded = False
+        self.inn = ""
+        self.fio = ""
+        self.oktmo = ""
+        self.ip_accounts = []
+        self.phone = ""
+        self.awaiting_phone = False
+
+    def add_bank_operations(self, operations, bank_name="", inn="", fio="", accounts=None):
+        self.bank_operations.extend(operations)
+        self.bank_files.append(bank_name)
+        
+        # Сохраняем ИНН только если он еще не установлен
+        if inn and len(inn) >= 10 and inn.isdigit() and not self.inn:
+            self.inn = inn
+        
+        # Сохраняем ФИО только если оно валидное (не номер счета)
+        if is_valid_fio(fio) and not self.fio:
+            self.fio = fio
+        
+        if accounts:
+            for acc in accounts:
+                if acc['number'] not in [a['number'] for a in self.ip_accounts]:
+                    self.ip_accounts.append(acc)
+
+    def set_ens_data(self, data):
+        self.ens_data = data
+        self.ens_loaded = True
+        if 'oktmo' in data and data['oktmo']:
+            self.oktmo = data['oktmo']
+
+    def reset(self):
+        self.bank_operations = []
+        self.bank_files = []
+        self.ens_data = {
+            'insurance_accrued': 0,
+            'insurance_paid': 0,
+            'insurance_paid_dates': [],
+            'penalties': 0,
+            'usn_payments': []
+        }
+        self.ens_loaded = False
+        self.inn = ""
+        self.fio = ""
+        self.oktmo = ""
+        self.ip_accounts = []
+        self.phone = ""
+        self.awaiting_phone = False
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -136,8 +157,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             operations, inn, fio, accounts = parse_bank_statement(tmp_path)
             
             if operations:
-                # ВАЖНО: передаем inn, fio, accounts для сохранения
-                session.add_bank_operations(operations, inn, fio, accounts)
+                session.add_bank_operations(operations, bank_name, inn, fio, accounts)
                 total = sum(op['amount'] for op in operations)
                 total_all = sum(op['amount'] for op in session.bank_operations)
                 
@@ -238,6 +258,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         inn = session.inn if session.inn else "632312967829"
+        # Если ФИО не найдено в выписках, используем значение по умолчанию
         fio = session.fio if session.fio else "Леонтьев Артём Владиславович"
         oktmo = session.oktmo if session.oktmo else "45908000"
         ip_accounts = session.ip_accounts if session.ip_accounts else []

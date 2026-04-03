@@ -402,7 +402,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         # Строка 133 - налог за год (AC40)
         write_amount_digits(ws21, 40, 29, cum_tax[4])
     
-    # ========== ЛИСТ "Раздел 2.1.1 (продолжение)" ==========
+        # ========== ЛИСТ "Раздел 2.1.1 (продолжение)" ==========
     if "Раздел 2.1.1 (продолжение)" in wb.sheetnames:
         ws21_cont = wb["Раздел 2.1.1 (продолжение)"]
         

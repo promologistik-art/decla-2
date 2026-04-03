@@ -387,10 +387,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         
         # Строка 123 - налоговая ставка за год (AC29)
         write_amount_digits(ws21, 29, 29, 6)
-        
-        # Строка 124 - обоснование ставки (AC31) - ставим "/"
-        write_letter(ws21, 31, 29, '/')
-        
+               
         # Строка 130 - налог за 1 квартал (AC34)
         write_amount_digits(ws21, 34, 29, cum_tax[1])
         
@@ -409,16 +406,16 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         ws21_cont = wb["Раздел 2.1.1 (продолжение)"]
         
         # Строка 140 - вычет за 1 квартал
-        write_amount_digits(ws21_cont, 12, 39, cum_deductible[1])
+        write_amount_digits(ws21_cont, 11, 28, cum_deductible[1])
         
         # Строка 141 - вычет за полугодие
-        write_amount_digits(ws21_cont, 14, 39, cum_deductible[2])
+        write_amount_digits(ws21_cont, 14, 28, cum_deductible[2])
         
         # Строка 142 - вычет за 9 месяцев
-        write_amount_digits(ws21_cont, 16, 39, cum_deductible[3])
+        write_amount_digits(ws21_cont, 17, 28, cum_deductible[3])
         
         # Строка 143 - вычет за год
-        write_amount_digits(ws21_cont, 18, 39, cum_deductible[4])
+        write_amount_digits(ws21_cont, 20, 28, cum_deductible[4])
     
     wb.save(output_excel)
     

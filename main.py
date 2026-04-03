@@ -30,17 +30,14 @@ def is_valid_fio(fio):
     """Проверяет, что строка похожа на ФИО (содержит буквы и не является номером счета)"""
     if not fio:
         return False
-    # ФИО должно содержать хотя бы одну русскую букву
     has_cyrillic = any('\u0400' <= c <= '\u04FF' for c in fio)
-    # Не должно состоять только из цифр и пробелов
     is_only_digits = all(c.isdigit() or c.isspace() for c in fio)
-    # Должно содержать хотя бы один пробел (разделение слов)
     has_space = ' ' in fio
     return has_cyrillic and not is_only_digits and has_space
 
 
-def detect_bank_name(filename, df=None):
-    """Определяет банк по имени файла или содержимому"""
+def detect_bank_name(filename):
+    """Определяет банк по имени файла"""
     name_lower = filename.lower()
     if 'ozon' in name_lower:
         return 'ОЗОН Банк'
@@ -80,11 +77,9 @@ class UserSession:
         self.bank_operations.extend(operations)
         self.bank_files.append(bank_name)
         
-        # Сохраняем ИНН только если он еще не установлен
         if inn and len(inn) >= 10 and inn.isdigit() and not self.inn:
             self.inn = inn
         
-        # Сохраняем ФИО только если оно валидное (не номер счета)
         if is_valid_fio(fio) and not self.fio:
             self.fio = fio
         
@@ -126,7 +121,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 *Бот для подготовки отчетности ИП на УСН*\n\n"
         "1️⃣ Загрузите выписки с расчетных счетов (Excel)\n"
         "2️⃣ Загрузите выписку с ЕНС (CSV)\n"
-        "3️⃣ Введите /report\n\n"
+        "3️⃣ Укажите номер телефона (требуется для заполнения декларации)\n\n"
         "📌 *Сроки за 2025 год:*\n"
         "• Декларацию сдать до *27 апреля 2026*\n"
         "• Налог уплатить до *28 апреля 2026*",
@@ -165,7 +160,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 await update.message.reply_text(msg)
                 
-                if not session.ens_loaded:
+                if session.ens_loaded and not session.phone:
+                    await update.message.reply_text(
+                        "📞 *Укажите контактный телефон*\n"
+                        "Например: *89261234567*\n\n"
+                        "Введите номер:",
+                        parse_mode="Markdown"
+                    )
+                    session.awaiting_phone = True
+                elif not session.ens_loaded:
                     await update.message.reply_text(
                         "📌 *Следующий шаг:* загрузите выписку с Единого налогового счета (ЕНС) в формате CSV",
                         parse_mode="Markdown"
@@ -188,14 +191,23 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg += f"• Уплачено: {ens_data['insurance_paid']:,.2f} ₽\n"
             msg += f"• Уплачено в 2025: {'Да' if paid_in_2025 else 'Нет'}\n"
             msg += f"• ОКТМО: {oktmo}\n"
-            msg += f"• Авансов по УСН: {len(usn_payments)}\n\n"
-            
-            if session.bank_operations:
-                msg += f"✅ Данные готовы! Введите /report"
-            else:
-                msg += f"📌 Теперь загрузите выписки из банков (Excel)"
+            msg += f"• Авансов по УСН: {len(usn_payments)}\n"
             
             await update.message.reply_text(msg)
+            
+            # После обработки ЕНС запрашиваем телефон, если его еще нет
+            if not session.phone:
+                await update.message.reply_text(
+                    "📞 *Укажите контактный телефон*\n"
+                    "Например: *89261234567*\n\n"
+                    "Введите номер:",
+                    parse_mode="Markdown"
+                )
+                session.awaiting_phone = True
+            elif session.bank_operations:
+                # Если телефон уже есть и есть выписки, формируем отчет
+                await update.message.reply_text("🔄 Формирую отчетность...")
+                await generate_and_send_report(update, session)
         
         else:
             await update.message.reply_text("❌ Поддерживаются .xlsx, .xls, .csv")
@@ -208,34 +220,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             os.unlink(tmp_path)
 
 
-async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if user_id not in user_sessions:
-        await update.message.reply_text("Сначала загрузите выписки (/start)")
-        return
-    
-    session = user_sessions[user_id]
-    
-    if not session.bank_operations:
-        await update.message.reply_text("⚠️ Сначала загрузите выписки из банков")
-        return
-    
-    if not session.ens_loaded:
-        await update.message.reply_text("⚠️ Сначала загрузите выписку ЕНС")
-        return
-    
-    if not session.phone:
-        session.awaiting_phone = True
-        await update.message.reply_text(
-            "📞 Укажите контактный телефон\n"
-            "Например: *89261234567*\n\n"
-            "Введите номер:",
-            parse_mode="Markdown"
-        )
-        return
-    
-    await update.message.reply_text("🔄 Формирую отчетность...")
+async def generate_and_send_report(update: Update, session):
+    """Формирует и отправляет отчетность"""
+    user_id = session.user_id
     
     try:
         all_ops = []
@@ -258,7 +245,6 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         inn = session.inn if session.inn else "632312967829"
-        # Если ФИО не найдено в выписках, используем значение по умолчанию
         fio = session.fio if session.fio else "Леонтьев Артём Владиславович"
         oktmo = session.oktmo if session.oktmo else "45908000"
         ip_accounts = session.ip_accounts if session.ip_accounts else []
@@ -299,6 +285,14 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         traceback.print_exc()
 
 
+async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /report - устарела, теперь бот запускается автоматически"""
+    await update.message.reply_text(
+        "🤖 Бот теперь работает автоматически.\n\n"
+        "После загрузки выписок и указания телефона отчетность формируется автоматически."
+    )
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
@@ -314,7 +308,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if phone_digits:
             session.phone = phone_digits
             session.awaiting_phone = False
-            await update.message.reply_text(f"✅ Телефон сохранен: {phone_digits}\n\n🔄 Введите /report")
+            await update.message.reply_text(f"✅ Телефон сохранен: {phone_digits}\n\n🔄 Формирую отчетность...")
+            
+            # После получения телефона формируем отчет
+            await generate_and_send_report(update, session)
         else:
             await update.message.reply_text("❌ Введите номер телефона цифрами")
         return
@@ -333,7 +330,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 *Помощь*\n\n"
         "/start — начать\n"
-        "/report — сформировать отчетность\n"
         "/reset — сбросить данные\n"
         "/help — справка",
         parse_mode="Markdown"

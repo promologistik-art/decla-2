@@ -231,7 +231,7 @@ def write_signature_date_section11(ws):
     cell.value = date_str
 
 
-def fill_declaration_template(operations, ens_data, template_path, output_excel, output_xml, inn, fio, oktmo, okved, phone):
+def fill_declaration_template(operations, ens_data, template_path, output_excel, output_xml, inn, fio, oktmo, phone):
     wb = load_workbook(template_path)
     
     # ========== ЛИСТ "Титул" ==========
@@ -389,7 +389,6 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         write_amount_digits(ws21, 29, 29, 6)
         
         # Строка 124 - обоснование ставки (AC31) - оставляем пустым
-        # write_digit(ws21, 31, 29, 0) - ничего не пишем
         
         # Строка 130 - налог за 1 квартал (AC34)
         write_amount_digits(ws21, 34, 29, cum_tax[1])
@@ -410,8 +409,8 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         # Строка 140 - вычет за 1 квартал (AB11 = колонка 28, строка 11)
         write_amount_digits(ws21_cont, 11, 28, cum_deductible[1])
         
-        # Строка 141 - вычет за полугодие (Z14 = колонка 26, строка 14)
-         write_amount_digits(ws21_cont, 14, 28, cum_deductible[2])
+        # Строка 141 - вычет за полугодие (AB14 = колонка 28, строка 14)
+        write_amount_digits(ws21_cont, 14, 28, cum_deductible[2])
         
         # Строка 142 - вычет за 9 месяцев (AB17 = колонка 28, строка 17)
         write_amount_digits(ws21_cont, 17, 28, cum_deductible[3])
@@ -476,14 +475,14 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     return tax_payable, total_income
 
 
-def generate_report(operations, ens_data, output_dir, user_id, kudir_template, decl_template, inn, fio, oktmo, ip_accounts, okved="", phone=""):
+def generate_report(operations, ens_data, output_dir, user_id, kudir_template, decl_template, inn, fio, oktmo, ip_accounts, phone=""):
     kudir_path = os.path.join(output_dir, f"kudir_{user_id}.xlsx")
     total_income = fill_kudir_template(operations, kudir_template, kudir_path, inn, fio, ip_accounts)
     
     decl_excel = os.path.join(output_dir, f"declaration_{user_id}.xlsx")
     decl_xml = os.path.join(output_dir, f"declaration_{user_id}.xml")
     tax_payable, total_income = fill_declaration_template(
-        operations, ens_data, decl_template, decl_excel, decl_xml, inn, fio, oktmo, okved, phone
+        operations, ens_data, decl_template, decl_excel, decl_xml, inn, fio, oktmo, phone
     )
     
     return kudir_path, decl_excel, decl_xml, total_income, tax_payable

@@ -30,7 +30,6 @@ class UserSession:
     def __init__(self, user_id):
         self.user_id = user_id
         self.bank_operations = []
-        self.bank_files = []  # Список загруженных банков
         self.ens_data = {
             'insurance_accrued': 0,
             'insurance_paid': 0,
@@ -46,10 +45,8 @@ class UserSession:
         self.phone = ""
         self.awaiting_phone = False
 
-    def add_bank_operations(self, operations, bank_name="", inn="", fio="", accounts=None):
+    def add_bank_operations(self, operations, inn="", fio="", accounts=None):
         self.bank_operations.extend(operations)
-        self.bank_files.append(bank_name)
-        # Берем ИНН и ФИО только если они еще не установлены
         if inn and len(inn) >= 10 and inn.isdigit() and not self.inn:
             self.inn = inn
         if fio and len(fio) > 10 and not self.fio:
@@ -67,7 +64,6 @@ class UserSession:
 
     def reset(self):
         self.bank_operations = []
-        self.bank_files = []
         self.ens_data = {
             'insurance_accrued': 0,
             'insurance_paid': 0,
@@ -140,7 +136,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             operations, inn, fio, accounts = parse_bank_statement(tmp_path)
             
             if operations:
-                session.add_bank_operations(operations, bank_name, inn, fio, accounts)
+                # ВАЖНО: передаем inn, fio, accounts для сохранения
+                session.add_bank_operations(operations, inn, fio, accounts)
                 total = sum(op['amount'] for op in operations)
                 total_all = sum(op['amount'] for op in session.bank_operations)
                 

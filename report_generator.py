@@ -155,9 +155,9 @@ def write_inn_digit_by_digit_section11(ws, inn):
             write_digit(ws, 1, columns[i], int(digit))
 
 def write_inn_digit_by_digit_section21(ws, inn):
-    """ИНН на листе Раздел 2.1.1: N1, O1, P1, Q1, R1, S1, T1, U1, V1, W1, X1, Y1"""
+    """ИНН на листе Раздел 2.1.1: M1, N1, O1, P1, Q1, R1, S1, T1, U1, V1, W1, X1"""
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
-    columns = [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+    columns = [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
     for i, digit in enumerate(inn_str):
         if i < len(columns):
             write_digit(ws, 1, columns[i], int(digit))
@@ -359,31 +359,66 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     if "Раздел 2.1.1" in wb.sheetnames:
         ws21 = wb["Раздел 2.1.1"]
         
+        # ИНН
         write_inn_digit_by_digit_section21(ws21, inn)
+        
+        # Строка 102 - признак налогоплательщика (2 = нет сотрудников) в AC11
         write_digit(ws21, 11, 29, 2)
         
+        # Строка 110 - доходы за 1 квартал (AC15)
         write_amount_digits(ws21, 15, 29, cum_income[1])
+        
+        # Строка 111 - доходы за полугодие (AC17)
         write_amount_digits(ws21, 17, 29, cum_income[2])
+        
+        # Строка 112 - доходы за 9 месяцев (AC19)
         write_amount_digits(ws21, 19, 29, cum_income[3])
+        
+        # Строка 113 - доходы за год (AC21)
         write_amount_digits(ws21, 21, 29, cum_income[4])
         
+        # Строка 120 - налоговая ставка за 1 квартал (AC23)
         write_amount_digits(ws21, 23, 29, 6)
+        
+        # Строка 121 - налоговая ставка за полугодие (AC25)
         write_amount_digits(ws21, 25, 29, 6)
+        
+        # Строка 122 - не заполняется (AC27)
+        
+        # Строка 123 - налоговая ставка за год (AC29)
         write_amount_digits(ws21, 29, 29, 6)
         
+        # Строка 124 - обоснование ставки (AC31) - ставим "/"
+        write_letter(ws21, 31, 29, '/')
+        
+        # Строка 130 - налог за 1 квартал (AC34)
         write_amount_digits(ws21, 34, 29, cum_tax[1])
+        
+        # Строка 131 - налог за полугодие (AC36)
         write_amount_digits(ws21, 36, 29, cum_tax[2])
+        
+        # Строка 132 - налог за 9 месяцев (AC38)
         write_amount_digits(ws21, 38, 29, cum_tax[3])
+        
+        # Строка 133 - налог за год (AC40)
         write_amount_digits(ws21, 40, 29, cum_tax[4])
     
     # ========== ЛИСТ "Раздел 2.1.1 (продолжение)" ==========
+    # Для вычетов по страховым взносам (строки 140-143)
     if "Раздел 2.1.1 (продолжение)" in wb.sheetnames:
         ws21_cont = wb["Раздел 2.1.1 (продолжение)"]
         
-        write_amount_digits(ws21_cont, 11, 28, cum_deductible[1])
-        write_amount_digits(ws21_cont, 14, 28, cum_deductible[2])
-        write_amount_digits(ws21_cont, 17, 28, cum_deductible[3])
-        write_amount_digits(ws21_cont, 20, 28, cum_deductible[4])
+        # Строка 140 - вычет за 1 квартал
+        write_amount_digits(ws21_cont, 12, 39, cum_deductible[1])
+        
+        # Строка 141 - вычет за полугодие
+        write_amount_digits(ws21_cont, 14, 39, cum_deductible[2])
+        
+        # Строка 142 - вычет за 9 месяцев
+        write_amount_digits(ws21_cont, 16, 39, cum_deductible[3])
+        
+        # Строка 143 - вычет за год
+        write_amount_digits(ws21_cont, 18, 39, cum_deductible[4])
     
     wb.save(output_excel)
     

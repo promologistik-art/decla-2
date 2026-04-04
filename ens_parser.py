@@ -79,13 +79,29 @@ def parse_ens_statement(file_path):
                 col_amount = col
                 break
     
+    # Сначала ищем ОКТМО в операциях уплаты
+    found_oktmo = None
     for _, row in df.iterrows():
+        op = str(row.get(col_op, '')).lower()
         if col_oktmo:
             oktmo_val = row.get(col_oktmo)
             if pd.notna(oktmo_val) and str(oktmo_val).strip():
-                result['oktmo'] = str(oktmo_val).strip()
+                # Берем ОКТМО из операции уплаты (не начисления)
+                if 'уплата' in op or 'платеж' in op:
+                    found_oktmo = str(oktmo_val).strip()
+                    break
+    
+    # Если не нашли в уплате, берем из любой строки
+    if not found_oktmo and col_oktmo:
+        for _, row in df.iterrows():
+            oktmo_val = row.get(col_oktmo)
+            if pd.notna(oktmo_val) and str(oktmo_val).strip():
+                found_oktmo = str(oktmo_val).strip()
                 break
     
+    result['oktmo'] = found_oktmo if found_oktmo else ""
+    
+    # Парсинг остальных данных
     for _, row in df.iterrows():
         try:
             op = str(row.get(col_op, '')).lower()
@@ -98,15 +114,18 @@ def parse_ens_statement(file_path):
             elif 'пеня' in op:
                 result['penalties'] += abs(amount)
             elif 'уплата' in op or 'платеж' in op:
+                # КБК УСН (авансовые платежи)
                 if '18201061201010000510' in kbk:
                     if date and amount > 0:
                         result['usn_payments'].append({
                             'date': date,
                             'amount': amount
                         })
+                # Страховые взносы
                 elif date and date.year == 2026 and amount > 0:
                     result['insurance_paid'] += amount
                     result['insurance_paid_dates'].append(date)
+            # Дополнительная проверка для страховых взносов по КБК
             elif '18210202000010000160' in kbk and amount > 0:
                 if date and date.year == 2026:
                     result['insurance_paid'] += amount

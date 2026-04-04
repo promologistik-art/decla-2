@@ -247,6 +247,9 @@ async def generate_and_send_report(update: Update, session):
         inn = session.inn if session.inn else "632312967829"
         fio = session.fio if session.fio else "Леонтьев Артём Владиславович"
         oktmo = session.oktmo if session.oktmo else "45908000"
+        # Принудительная замена устаревшего кода
+        if oktmo == "36701320":
+            oktmo = "36701000"
         ip_accounts = session.ip_accounts if session.ip_accounts else []
         phone = session.phone
         

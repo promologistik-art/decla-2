@@ -202,6 +202,7 @@ async def set_commands(app):
         ("new", "Новая декларация"),
         ("status", "Мой статус"),
         ("help", "Помощь"),
+        ("admin", "Админ панель"),
     ]
     await app.bot.set_my_commands(commands)
 
@@ -308,11 +309,10 @@ async def contact_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     if not is_admin(user_id):
-        await update.message.reply_text("⛔ У вас нет доступа")
+        await update.message.reply_text("⛔ У вас нет доступа к админ панели")
         return
     
     keyboard = InlineKeyboardMarkup([
@@ -709,6 +709,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/new — начать новую декларацию\n"
         "/status — проверить статус подписки\n"
         "/reset — сбросить текущую сессию\n"
+        "/admin — админ панель\n"
         "/help — показать это сообщение\n\n"
         f"📞 По вопросам оплаты: @{ADMIN_USERNAME}",
         parse_mode="Markdown"
@@ -729,6 +730,7 @@ def main():
     app.add_handler(CommandHandler("status", my_status))
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("add", add_subscription))
     
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))

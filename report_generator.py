@@ -180,12 +180,13 @@ def write_director_last_name_section11(ws, last_name):
     cell.value = last_name.upper()
 
 def write_signature_date_section11(ws):
+    """Дата подписи на листе Раздел 1.1: V50 целиком (шрифт не меняем, как в J50)"""
     today = datetime.now()
     date_str = today.strftime('%d.%m.%Y')
     target_row, target_col = get_merge_start(ws, 50, 22)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = date_str
-    cell.font = Font(name='Courier New', size=16)
+    # Не меняем шрифт — оставляем как в шаблоне (как в J50)
 
 
 def generate_report(operations, ens_data, output_dir, user_id, decl_template, inn, fio, oktmo, ip_accounts, phone, is_full_version=False):

@@ -3,6 +3,7 @@ import warnings
 from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string
+from openpyxl.styles import Font, PatternFill
 
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
 
@@ -12,14 +13,12 @@ def format_currency(amount):
     return round(amount, 2)
 
 def get_merge_start(ws, row, col):
-    """Возвращает координаты верхней левой ячейки объединения"""
     for merged in ws.merged_cells.ranges:
         if merged.min_row <= row <= merged.max_row and merged.min_col <= col <= merged.max_col:
             return merged.min_row, merged.min_col
     return row, col
 
 def safe_write(ws, row, col, value, as_text=False):
-    """Безопасная запись"""
     if value is None:
         return
     target_row, target_col = get_merge_start(ws, row, col)
@@ -28,39 +27,47 @@ def safe_write(ws, row, col, value, as_text=False):
         cell.value = str(int(value))
     else:
         cell.value = value
+    cell.font = Font(name='Courier New', size=16)
 
 def write_digit(ws, row, col, digit):
-    """Запись одной цифры"""
     if digit is None:
         return
     target_row, target_col = get_merge_start(ws, row, col)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = str(int(digit))
+    cell.font = Font(name='Courier New', size=16)
 
 def write_letter(ws, row, col, letter):
-    """Запись одной буквы"""
     if not letter:
         return
     target_row, target_col = get_merge_start(ws, row, col)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = letter
+    cell.font = Font(name='Courier New', size=16)
+
+def write_limited_text(ws, row, start_col):
+    """Записывает текст 'limited' с красной заливкой фона, шрифт Courier New 16"""
+    text = "limited"
+    for i, char in enumerate(text):
+        target_row, target_col = get_merge_start(ws, row, start_col + i)
+        cell = ws.cell(row=target_row, column=target_col)
+        cell.value = char
+        cell.font = Font(name='Courier New', size=16)
+        cell.fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
 
 def write_oktmo_digits(ws, row, start_col, oktmo):
-    """Запись ОКТМО (8 цифр) последовательно в ячейки"""
     oktmo_str = str(oktmo).strip()
     for i, digit in enumerate(oktmo_str):
         if i < 8 and digit.isdigit():
             write_digit(ws, row, start_col + i, int(digit))
 
 def write_amount_digits(ws, row, start_col, amount):
-    """Запись суммы последовательно в ячейки (до 12 цифр)"""
     amount_str = str(int(abs(amount)))
     for i, digit in enumerate(amount_str):
         if i < 12:
             write_digit(ws, row, start_col + i, int(digit))
 
 def write_phone_by_letters(ws, phone):
-    """Телефон: U27, W27, Y27, AA27, AC27, AE27, AG27, AI27, AK27, AM27, AO27"""
     phone_digits = ''.join(ch for ch in str(phone) if ch.isdigit())
     columns = [21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41]
     for i, digit in enumerate(phone_digits[:11]):
@@ -68,7 +75,6 @@ def write_phone_by_letters(ws, phone):
             write_digit(ws, 27, columns[i], int(digit))
 
 def write_legal_name_by_letters(ws, name):
-    """Название юрлица по буквам: A15, C15, E15..."""
     name_clean = ''.join(ch for ch in name.upper() if ch.isalpha() or ch == ' ')
     row = 15
     col = 1
@@ -82,64 +88,24 @@ def write_legal_name_by_letters(ws, name):
         col += 2
 
 def write_last_name_by_letters(ws, last_name):
-    """Фамилия: B43, D43, F43..."""
     col = 2
     for char in last_name.upper():
         write_letter(ws, 43, col, char)
         col += 2
 
 def write_first_name_by_letters(ws, first_name):
-    """Имя: B45, D45, F45..."""
     col = 2
     for char in first_name.upper():
         write_letter(ws, 45, col, char)
         col += 2
 
 def write_patronymic_by_letters(ws, patronymic):
-    """Отчество: B47, D47, F47..."""
     col = 2
     for char in patronymic.upper():
         write_letter(ws, 47, col, char)
         col += 2
 
-
-# ========== КУДиР ==========
-
-def write_inn_digit_by_digit_kudir(ws, inn):
-    inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
-    positions = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23]
-    for i, digit in enumerate(inn_str):
-        if i < len(positions):
-            write_digit(ws, 28, positions[i], int(digit))
-
-def fill_kudir_template(operations, template_path, output_path, inn, fio, ip_accounts, year=2025):
-    wb = load_workbook(template_path)
-    ws1 = wb["Лист1"]
-    
-    safe_write(ws1, 15, column_index_from_string('H'), year % 100, as_text=True)
-    safe_write(ws1, 18, column_index_from_string('V'), fio)
-    write_inn_digit_by_digit_kudir(ws1, inn)
-    safe_write(ws1, 14, column_index_from_string('BB'), 1151085, as_text=True)
-    
-    today = datetime.now()
-    safe_write(ws1, 15, column_index_from_string('BB'), today.year, as_text=True)
-    safe_write(ws1, 15, column_index_from_string('BG'), today.month, as_text=True)
-    safe_write(ws1, 15, column_index_from_string('BJ'), today.day, as_text=True)
-    safe_write(ws1, 30, column_index_from_string('P'), "Доходы")
-    
-    row = 38
-    for acc in ip_accounts:
-        safe_write(ws1, row, 1, f"{acc['number']} {acc['bank']} БИК {acc['bik']}")
-        row += 2
-    
-    wb.save(output_path)
-    return sum(op['amount'] for op in operations)
-
-
-# ========== ДЕКЛАРАЦИЯ ==========
-
 def write_inn_digit_by_digit_titul(ws, inn):
-    """ИНН на листе Титул: Y1, AA1, AC1, AE1, AG1, AI1, AK1, AM1, AO1, AQ1, AS1, AU1"""
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
     columns = [25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47]
     for i, digit in enumerate(inn_str):
@@ -147,7 +113,6 @@ def write_inn_digit_by_digit_titul(ws, inn):
             write_digit(ws, 1, columns[i], int(digit))
 
 def write_inn_digit_by_digit_section11(ws, inn):
-    """ИНН на листе Раздел 1.1: M1, N1, O1, P1, Q1, R1, S1, T1, U1, V1, W1, X1"""
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
     columns = [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
     for i, digit in enumerate(inn_str):
@@ -155,15 +120,13 @@ def write_inn_digit_by_digit_section11(ws, inn):
             write_digit(ws, 1, columns[i], int(digit))
 
 def write_inn_digit_by_digit_section21(ws, inn):
-    """ИНН на листе Раздел 2.1.1: M1, N1, O1, P1, Q1, R1, S1, T1, U1, V1, W1, X1"""
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
-    columns = [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+    columns = [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
     for i, digit in enumerate(inn_str):
         if i < len(columns):
             write_digit(ws, 1, columns[i], int(digit))
 
 def write_tax_office_code(ws, inn):
-    """Код налогового органа: AA13, AC13, AE13, AG13"""
     inn_str = ''.join(ch for ch in str(inn) if ch.isdigit())
     tax_code = inn_str[:4]
     columns = [27, 29, 31, 33]
@@ -172,22 +135,18 @@ def write_tax_office_code(ws, inn):
             write_digit(ws, 13, columns[i], int(digit))
 
 def write_place_of_registration_code(ws):
-    """Код по месту учета 120: BW13, BY13, CA13"""
     write_digit(ws, 13, 75, 1)
     write_digit(ws, 13, 77, 2)
     write_digit(ws, 13, 79, 0)
 
 def write_correction_number(ws):
-    """Номер корректировки 0: S11"""
     write_digit(ws, 11, 19, 0)
 
 def write_tax_period_code(ws):
-    """Налоговый период 34: BA11, BC11"""
     write_digit(ws, 11, 53, 3)
     write_digit(ws, 11, 55, 4)
 
 def write_report_year(ws, year):
-    """Отчетный год 2025: BU11, BW11, BY11, CA11"""
     year_str = str(year)
     columns = [73, 75, 77, 79]
     for i, digit in enumerate(year_str):
@@ -195,18 +154,16 @@ def write_report_year(ws, year):
             write_digit(ws, 11, columns[i], int(digit))
 
 def write_director_last_name_titul(ws, last_name):
-    """Фамилия директора в H50 на листе Титул"""
+    """Исключение: шрифт не меняем"""
     target_row, target_col = get_merge_start(ws, 50, 8)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = last_name.upper()
 
 def write_signature_date_titul(ws):
-    """Дата подписи на листе Титул: V50, X50, AB50, AD50, AH50, AJ50, AL50, AN50"""
     today = datetime.now()
     day = str(today.day).zfill(2)
     month = str(today.month).zfill(2)
     year = str(today.year)
-    
     write_digit(ws, 50, 22, int(day[0]))
     write_digit(ws, 50, 24, int(day[1]))
     write_digit(ws, 50, 28, int(month[0]))
@@ -217,26 +174,26 @@ def write_signature_date_titul(ws):
     write_digit(ws, 50, 40, int(year[3]))
 
 def write_director_last_name_section11(ws, last_name):
-    """Фамилия директора в J50 на листе Раздел 1.1"""
+    """Исключение: шрифт не меняем"""
     target_row, target_col = get_merge_start(ws, 50, 10)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = last_name.upper()
 
 def write_signature_date_section11(ws):
-    """Дата подписи на листе Раздел 1.1: V50 целиком"""
     today = datetime.now()
     date_str = today.strftime('%d.%m.%Y')
     target_row, target_col = get_merge_start(ws, 50, 22)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = date_str
+    cell.font = Font(name='Courier New', size=16)
 
 
-def fill_declaration_template(operations, ens_data, template_path, output_excel, output_xml, inn, fio, oktmo, phone):
-    wb = load_workbook(template_path)
+def generate_report(operations, ens_data, output_dir, user_id, decl_template, inn, fio, oktmo, ip_accounts, phone, is_full_version=False):
+    wb = load_workbook(decl_template)
     
     # ========== ЛИСТ "Титул" ==========
     if "Титул" not in wb.sheetnames:
-        raise Exception(f"Лист 'Титул' не найден. Доступные листы: {wb.sheetnames}")
+        raise Exception(f"Лист 'Титул' не найден")
     
     ws_titul = wb["Титул"]
     
@@ -270,7 +227,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     
     # ========== ЛИСТ "Раздел 1.1" ==========
     if "Раздел 1.1" not in wb.sheetnames:
-        raise Exception(f"Лист 'Раздел 1.1' не найден. Доступные листы: {wb.sheetnames}")
+        raise Exception(f"Лист 'Раздел 1.1' не найден")
     
     ws_s11 = wb["Раздел 1.1"]
     
@@ -300,7 +257,6 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     
     cum_tax = {i: cum_income[i] * tax_rate / 100 for i in range(1, 5)}
     
-    # Авансовые платежи из ЕНС
     usn_payments = ens_data.get('usn_payments', [])
     advance_payments = {1: 0.0, 2: 0.0, 3: 0.0}
     for payment in usn_payments:
@@ -319,108 +275,83 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
     
     tax_payable = max(0, cum_tax[4] - cum_deductible[4] - advance_payments[1] - advance_payments[2] - advance_payments[3])
     
-    # Строка 020 - аванс за 1 квартал (Z15)
+    # Строка 020
     if advance_payments[1] > 0:
         write_amount_digits(ws_s11, 15, 26, advance_payments[1])
     else:
         write_digit(ws_s11, 15, 26, 0)
     
-    # Строка 040 - аванс за полугодие (Z20)
+    # Строка 040
     if advance_payments[2] > 0:
         write_amount_digits(ws_s11, 20, 26, advance_payments[2])
     else:
         write_digit(ws_s11, 20, 26, 0)
     
-    # Строка 050 - аванс к уменьшению за полугодие (Z23)
+    # Строка 050
     write_digit(ws_s11, 23, 26, 0)
     
-    # Строка 070 - аванс за 9 месяцев (Z28)
+    # Строка 070
     if advance_payments[3] > 0:
         write_amount_digits(ws_s11, 28, 26, advance_payments[3])
     else:
         write_digit(ws_s11, 28, 26, 0)
     
-    # Строка 080 - аванс к уменьшению за 9 месяцев (Z31)
+    # Строка 080
     write_digit(ws_s11, 31, 26, 0)
     
-    # Строка 100 - налог к уплате (Z36)
-    if tax_payable > 0:
-        write_amount_digits(ws_s11, 36, 26, tax_payable)
+    # Строка 100
+    if is_full_version:
+        if tax_payable > 0:
+            write_amount_digits(ws_s11, 36, 26, tax_payable)
+        else:
+            write_digit(ws_s11, 36, 26, 0)
     else:
-        write_digit(ws_s11, 36, 26, 0)
+        write_limited_text(ws_s11, 36, 26)
     
-    # Строка 110 - налог к уменьшению (Z41)
+    # Строка 110
     if tax_payable < 0:
         write_amount_digits(ws_s11, 41, 26, abs(tax_payable))
     else:
         write_digit(ws_s11, 41, 26, 0)
     
-    # ========== ЛИСТ "Раздел 2.1.1" ==========
-    if "Раздел 2.1.1" in wb.sheetnames:
-        ws21 = wb["Раздел 2.1.1"]
+    # ========== ЛИСТ "Раздел 2.1.1" (только для полной версии) ==========
+    if is_full_version:
+        if "Раздел 2.1.1" in wb.sheetnames:
+            ws21 = wb["Раздел 2.1.1"]
+            write_inn_digit_by_digit_section21(ws21, inn)
+            write_digit(ws21, 11, 29, 2)
+            write_amount_digits(ws21, 15, 29, cum_income[1])
+            write_amount_digits(ws21, 17, 29, cum_income[2])
+            write_amount_digits(ws21, 19, 29, cum_income[3])
+            write_amount_digits(ws21, 21, 29, cum_income[4])
+            write_amount_digits(ws21, 23, 29, 6)
+            write_amount_digits(ws21, 25, 29, 6)
+            write_amount_digits(ws21, 29, 29, 6)
+            write_amount_digits(ws21, 34, 29, cum_tax[1])
+            write_amount_digits(ws21, 36, 29, cum_tax[2])
+            write_amount_digits(ws21, 38, 29, cum_tax[3])
+            write_amount_digits(ws21, 40, 29, cum_tax[4])
         
-        # ИНН
-        write_inn_digit_by_digit_section21(ws21, inn)
-        
-        # Строка 102 - признак налогоплательщика (2 = нет сотрудников) в AC11
-        write_digit(ws21, 11, 29, 2)
-        
-        # Строка 110 - доходы за 1 квартал (AC15)
-        write_amount_digits(ws21, 15, 29, cum_income[1])
-        
-        # Строка 111 - доходы за полугодие (AC17)
-        write_amount_digits(ws21, 17, 29, cum_income[2])
-        
-        # Строка 112 - доходы за 9 месяцев (AC19)
-        write_amount_digits(ws21, 19, 29, cum_income[3])
-        
-        # Строка 113 - доходы за год (AC21)
-        write_amount_digits(ws21, 21, 29, cum_income[4])
-        
-        # Строка 120 - налоговая ставка за 1 квартал (AC23)
-        write_amount_digits(ws21, 23, 29, 6)
-        
-        # Строка 121 - налоговая ставка за полугодие (AC25)
-        write_amount_digits(ws21, 25, 29, 6)
-        
-        # Строка 122 - не заполняется (AC27)
-        
-        # Строка 123 - налоговая ставка за год (AC29)
-        write_amount_digits(ws21, 29, 29, 6)
-               
-        # Строка 130 - налог за 1 квартал (AC34)
-        write_amount_digits(ws21, 34, 29, cum_tax[1])
-        
-        # Строка 131 - налог за полугодие (AC36)
-        write_amount_digits(ws21, 36, 29, cum_tax[2])
-        
-        # Строка 132 - налог за 9 месяцев (AC38)
-        write_amount_digits(ws21, 38, 29, cum_tax[3])
-        
-        # Строка 133 - налог за год (AC40)
-        write_amount_digits(ws21, 40, 29, cum_tax[4])
+        if "Раздел 2.1.1 (продолжение)" in wb.sheetnames:
+            ws21_cont = wb["Раздел 2.1.1 (продолжение)"]
+            write_amount_digits(ws21_cont, 11, 28, cum_deductible[1])
+            write_amount_digits(ws21_cont, 14, 28, cum_deductible[2])
+            write_amount_digits(ws21_cont, 17, 28, cum_deductible[3])
+            write_amount_digits(ws21_cont, 20, 28, cum_deductible[4])
+    else:
+        if "Раздел 2.1.1" in wb.sheetnames:
+            wb.remove(wb["Раздел 2.1.1"])
+        if "Раздел 2.1.1 (продолжение)" in wb.sheetnames:
+            wb.remove(wb["Раздел 2.1.1 (продолжение)"])
     
-    # ========== ЛИСТ "Раздел 2.1.1 (продолжение)" ==========
-    # Для вычетов по страховым взносам (строки 140-143)
-    if "Раздел 2.1.1 (продолжение)" in wb.sheetnames:
-        ws21_cont = wb["Раздел 2.1.1 (продолжение)"]
-        
-        # Строка 140 - вычет за 1 квартал
-        write_amount_digits(ws21_cont, 11, 28, cum_deductible[1])
-        
-        # Строка 141 - вычет за полугодие
-        write_amount_digits(ws21_cont, 14, 28, cum_deductible[2])
-        
-        # Строка 142 - вычет за 9 месяцев
-        write_amount_digits(ws21_cont, 17, 28, cum_deductible[3])
-        
-        # Строка 143 - вычет за год
-        write_amount_digits(ws21_cont, 20, 28, cum_deductible[4])
+    suffix = "" if is_full_version else "_ДЕМО"
+    decl_excel = os.path.join(output_dir, f"declaration_{user_id}{suffix}.xlsx")
+    wb.save(decl_excel)
     
-    wb.save(output_excel)
-    
-    # XML
-    xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+    decl_xml = None
+    if is_full_version:
+        decl_xml = os.path.join(output_dir, f"declaration_{user_id}.xml")
+        xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Файл xmlns="urn:ФНС-СХД-Декл-УСН-2025-1">
     <Документ>
         <КНД>1152017</КНД>
@@ -467,21 +398,7 @@ def fill_declaration_template(operations, ens_data, template_path, output_excel,
         </Раздел2_1_1>
     </Показатели>
 </Файл>'''
+        with open(decl_xml, 'w', encoding='utf-8') as f:
+            f.write(xml)
     
-    with open(output_xml, 'w', encoding='utf-8') as f:
-        f.write(xml)
-    
-    return tax_payable, total_income
-
-
-def generate_report(operations, ens_data, output_dir, user_id, kudir_template, decl_template, inn, fio, oktmo, ip_accounts, phone=""):
-    kudir_path = os.path.join(output_dir, f"kudir_{user_id}.xlsx")
-    total_income = fill_kudir_template(operations, kudir_template, kudir_path, inn, fio, ip_accounts)
-    
-    decl_excel = os.path.join(output_dir, f"declaration_{user_id}.xlsx")
-    decl_xml = os.path.join(output_dir, f"declaration_{user_id}.xml")
-    tax_payable, total_income = fill_declaration_template(
-        operations, ens_data, decl_template, decl_excel, decl_xml, inn, fio, oktmo, phone
-    )
-    
-    return kudir_path, decl_excel, decl_xml, total_income, tax_payable
+    return decl_excel, decl_xml, total_income, tax_payable

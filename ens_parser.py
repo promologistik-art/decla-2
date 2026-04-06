@@ -23,6 +23,31 @@ def parse_date(val):
             pass
     return None
 
+def detect_tax_object(df, col_op, col_kbk):
+    """Определяет объект налогообложения по КБК авансовых платежей"""
+    kbk_6 = '18210501011011000110'   # УСН Доходы 6%
+    kbk_15 = '18210501021011000110'  # УСН Доходы минус расходы 15%
+    
+    has_6 = False
+    has_15 = False
+    
+    for _, row in df.iterrows():
+        op = str(row.get(col_op, '')).lower()
+        kbk = str(row.get(col_kbk, ''))
+        
+        if 'уплата' in op or 'платеж' in op:
+            if kbk_6 in kbk:
+                has_6 = True
+            if kbk_15 in kbk:
+                has_15 = True
+    
+    if has_6 and not has_15:
+        return 1  # Доходы
+    elif has_15 and not has_6:
+        return 2  # Доходы минус расходы
+    else:
+        return None  # Не определилось, нужно спросить
+
 def parse_ens_statement(file_path):
     """Парсинг CSV выписки ЕНС"""
     df = None
@@ -50,7 +75,8 @@ def parse_ens_statement(file_path):
         'insurance_paid_dates': [],
         'penalties': 0.0,
         'oktmo': '',
-        'usn_payments': []
+        'usn_payments': [],
+        'tax_object': None  # 1 - Доходы, 2 - Доходы минус расходы
     }
     
     col_op = None
@@ -79,19 +105,20 @@ def parse_ens_statement(file_path):
                 col_amount = col
                 break
     
-    # Сначала ищем ОКТМО в операциях уплаты
+    # Определяем объект налогообложения
+    result['tax_object'] = detect_tax_object(df, col_op, col_kbk)
+    
+    # Ищем ОКТМО в операциях уплаты
     found_oktmo = None
     for _, row in df.iterrows():
         op = str(row.get(col_op, '')).lower()
         if col_oktmo:
             oktmo_val = row.get(col_oktmo)
             if pd.notna(oktmo_val) and str(oktmo_val).strip():
-                # Берем ОКТМО из операции уплаты (не начисления)
                 if 'уплата' in op or 'платеж' in op:
                     found_oktmo = str(oktmo_val).strip()
                     break
     
-    # Если не нашли в уплате, берем из любой строки
     if not found_oktmo and col_oktmo:
         for _, row in df.iterrows():
             oktmo_val = row.get(col_oktmo)
@@ -114,18 +141,18 @@ def parse_ens_statement(file_path):
             elif 'пеня' in op:
                 result['penalties'] += abs(amount)
             elif 'уплата' in op or 'платеж' in op:
-                # КБК УСН (авансовые платежи)
-                if '18201061201010000510' in kbk:
+                # КБК УСН (авансовые платежи) - оба варианта
+                if '1821050101' in kbk:  # УСН
                     if date and amount > 0:
                         result['usn_payments'].append({
                             'date': date,
-                            'amount': amount
+                            'amount': amount,
+                            'kbk': kbk
                         })
                 # Страховые взносы
                 elif date and date.year == 2026 and amount > 0:
                     result['insurance_paid'] += amount
                     result['insurance_paid_dates'].append(date)
-            # Дополнительная проверка для страховых взносов по КБК
             elif '18210202000010000160' in kbk and amount > 0:
                 if date and date.year == 2026:
                     result['insurance_paid'] += amount

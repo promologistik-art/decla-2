@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment
 
 from bank_parser import parse_bank_statement
 from ens_parser import parse_ens_statement
@@ -341,24 +343,85 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if query.data == "admin_users":
         users = load_users()
-        paid = 0
-        demo = 0
+        
+        # Создаем Excel файл
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Пользователи"
+        
+        # Заголовки
+        headers = ["ID", "Имя", "Username", "Дата регистрации", "Триал до", "Статус"]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal="center")
+        
+        # Данные
+        row = 2
+        paid_count = 0
+        demo_count = 0
+        
         for uid, data in users.items():
-            if data.get("subscription_until"):
+            user_id_val = uid
+            first_name = data.get("first_name", "")
+            username = data.get("username", "")
+            created_at = data.get("created_at", "")[:10] if data.get("created_at") else ""
+            subscription_until = data.get("subscription_until", "")
+            
+            if subscription_until:
                 try:
-                    until = datetime.fromisoformat(data["subscription_until"])
+                    until = datetime.fromisoformat(subscription_until)
                     if datetime.now() < until:
-                        paid += 1
+                        status = "Платный"
+                        paid_count += 1
                     else:
-                        demo += 1
+                        status = "Демо (просрочен)"
+                        demo_count += 1
+                    subscription_until_str = until.strftime('%Y-%m-%d')
                 except:
-                    demo += 1
+                    status = "Демо"
+                    demo_count += 1
+                    subscription_until_str = "—"
             else:
-                demo += 1
+                status = "Демо"
+                demo_count += 1
+                subscription_until_str = "—"
+            
+            ws.cell(row=row, column=1, value=int(user_id_val))
+            ws.cell(row=row, column=2, value=first_name)
+            ws.cell(row=row, column=3, value=f"@{username}" if username else "—")
+            ws.cell(row=row, column=4, value=created_at)
+            ws.cell(row=row, column=5, value=subscription_until_str)
+            ws.cell(row=row, column=6, value=status)
+            
+            row += 1
         
-        text = f"Статистика пользователей\n\n✅ Платных: {paid}\n⚠️ Демо: {demo}\n📊 Всего: {len(users)}"
-        await query.edit_message_text(text)
+        # Итоговая строка
+        ws.cell(row=row, column=1, value=f"Итого: {len(users)}")
+        ws.cell(row=row, column=2, value=f"Платных: {paid_count}")
+        ws.cell(row=row, column=3, value=f"Демо: {demo_count}")
         
+        # Автоширина колонок
+        for col in range(1, 7):
+            ws.column_dimensions[chr(64 + col)].width = 20
+        
+        # Сохраняем во временный файл
+        temp_file = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+        wb.save(temp_file.name)
+        temp_file.close()
+        
+        # Отправляем файл
+        with open(temp_file.name, 'rb') as f:
+            await query.message.reply_document(
+                document=f,
+                filename=f"users_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                caption=f"📊 Список пользователей\n\n✅ Платных: {paid_count}\n⚠️ Демо: {demo_count}\n📊 Всего: {len(users)}"
+            )
+        
+        # Удаляем временный файл
+        os.unlink(temp_file.name)
+        
+        # Кнопка назад
         back_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]
         ])

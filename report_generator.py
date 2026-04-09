@@ -46,7 +46,7 @@ def write_letter(ws, row, col, letter):
     cell.font = Font(name='Courier New', size=16)
 
 def write_limited_text(ws, row, start_col):
-    """Записывает текст 'limited' с красной заливкой фона, шрифт Courier New 16"""
+    """Записывает текст 'limited' с красной заливкой фона"""
     text = "limited"
     for i, char in enumerate(text):
         target_row, target_col = get_merge_start(ws, row, start_col + i)
@@ -154,7 +154,6 @@ def write_report_year(ws, year):
             write_digit(ws, 11, columns[i], int(digit))
 
 def write_director_last_name_titul(ws, last_name):
-    """Исключение: шрифт не меняем"""
     target_row, target_col = get_merge_start(ws, 50, 8)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = last_name.upper()
@@ -174,19 +173,88 @@ def write_signature_date_titul(ws):
     write_digit(ws, 50, 40, int(year[3]))
 
 def write_director_last_name_section11(ws, last_name):
-    """Исключение: шрифт не меняем"""
     target_row, target_col = get_merge_start(ws, 50, 10)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = last_name.upper()
 
 def write_signature_date_section11(ws):
-    """Дата подписи на листе Раздел 1.1: V50 целиком (шрифт не меняем, как в J50)"""
     today = datetime.now()
     date_str = today.strftime('%d.%m.%Y')
     target_row, target_col = get_merge_start(ws, 50, 22)
     cell = ws.cell(row=target_row, column=target_col)
     cell.value = date_str
-    # Не меняем шрифт — оставляем как в шаблоне (как в J50)
+
+
+def generate_xml(inn, fio, oktmo, advance_payments, cum_income, cum_tax, cum_deductible, tax_payable, tax_rate=6):
+    """Генерирует XML для ФНС в правильном формате"""
+    
+    fio_parts = fio.split()
+    last_name = fio_parts[0].upper() if len(fio_parts) > 0 else ""
+    first_name = fio_parts[1].upper() if len(fio_parts) > 1 else ""
+    patronymic = fio_parts[2].upper() if len(fio_parts) > 2 else ""
+    
+    today = datetime.now()
+    kod_no = inn[:4]  # Первые 4 цифры ИНН - код налоговой
+    
+    xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Файл xmlns="urn:ФНС-СХД-Декл-УСН-2025-1" 
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+      xsi:schemaLocation="urn:ФНС-СХД-Декл-УСН-2025-1 http://www.nalog.ru/static/schemas/2025/usn.xsd">
+    <ИдФайл>NO_USN_{inn}_{today.strftime("%Y%m%d")}</ИдФайл>
+    <ВерсПрог>1.0</ВерсПрог>
+    <ВерсФорм>5.09</ВерсФорм>
+    <Документ>
+        <КНД>1152017</КНД>
+        <ДатаДок>{today.strftime("%d.%m.%Y")}</ДатаДок>
+        <НомКорр>0</НомКорр>
+        <Период>34</Период>
+        <ОтчетГод>2025</ОтчетГод>
+        <КодНО>{kod_no}</КодНО>
+        <Налогоплательщик>
+            <ИНН>{inn}</ИНН>
+            <НПЮЛ>
+                <Название>Индивидуальный предприниматель {last_name} {first_name} {patronymic}</Название>
+            </НПЮЛ>
+        </Налогоплательщик>
+        <Показатели>
+            <Раздел1_1>
+                <ОКТМО>{oktmo}</ОКТМО>
+                <СумАван010>{int(advance_payments[1])}</СумАван010>
+                <СумАван020>{int(advance_payments[2])}</СумАван020>
+                <СумАван040>{int(advance_payments[3])}</СумАван040>
+                <СумАван070>0</СумАван070>
+                <СумНал100>{int(tax_payable)}</СумНал100>
+            </Раздел1_1>
+            <Раздел2_1_1>
+                <СумДоход110>{int(cum_income[1])}</СумДоход110>
+                <СумДоход111>{int(cum_income[2])}</СумДоход111>
+                <СумДоход112>{int(cum_income[3])}</СумДоход112>
+                <СумДоход113>{int(cum_income[4])}</СумДоход113>
+                <НалСтавка120>{tax_rate}</НалСтавка120>
+                <НалСтавка121>{tax_rate}</НалСтавка121>
+                <НалСтавка122>{tax_rate}</НалСтавка122>
+                <НалСтавка123>{tax_rate}</НалСтавка123>
+                <СумИсчисНал130>{int(cum_tax[1])}</СумИсчисНал130>
+                <СумИсчисНал131>{int(cum_tax[2])}</СумИсчисНал131>
+                <СумИсчисНал132>{int(cum_tax[3])}</СумИсчисНал132>
+                <СумИсчисНал133>{int(cum_tax[4])}</СумИсчисНал133>
+                <СумУплНал140>{int(cum_deductible[1])}</СумУплНал140>
+                <СумУплНал141>{int(cum_deductible[2])}</СумУплНал141>
+                <СумУплНал142>{int(cum_deductible[3])}</СумУплНал142>
+                <СумУплНал143>{int(cum_deductible[4])}</СумУплНал143>
+            </Раздел2_1_1>
+        </Показатели>
+        <Подписант>
+            <ФИО>
+                <Фамилия>{last_name}</Фамилия>
+                <Имя>{first_name}</Имя>
+                <Отчество>{patronymic}</Отчество>
+            </ФИО>
+        </Подписант>
+    </Документ>
+</Файл>'''
+    
+    return xml
 
 
 def generate_report(operations, ens_data, output_dir, user_id, decl_template, inn, fio, oktmo, ip_accounts, phone, is_full_version=False):
@@ -345,61 +413,19 @@ def generate_report(operations, ens_data, output_dir, user_id, decl_template, in
         if "Раздел 2.1.1 (продолжение)" in wb.sheetnames:
             wb.remove(wb["Раздел 2.1.1 (продолжение)"])
     
+    # Сохраняем Excel
     suffix = "" if is_full_version else "_ДЕМО"
     decl_excel = os.path.join(output_dir, f"declaration_{user_id}{suffix}.xlsx")
     wb.save(decl_excel)
     
+    # XML только для полной версии
     decl_xml = None
     if is_full_version:
-        decl_xml = os.path.join(output_dir, f"declaration_{user_id}.xml")
-        xml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<Файл xmlns="urn:ФНС-СХД-Декл-УСН-2025-1">
-    <Документ>
-        <КНД>1152017</КНД>
-        <ДатаДок>{datetime.now().strftime('%Y-%m-%d')}</ДатаДок>
-        <НомКорр>0</НомКорр>
-    </Документ>
-    <НалогПериод>
-        <НомерПериода>34</НомерПериода>
-        <ОтчетныйГод>2025</ОтчетныйГод>
-    </НалогПериод>
-    <Налогоплательщик>
-        <ИНН>{inn}</ИНН>
-        <ИП>
-            <ФИО>
-                <Фамилия>{last_name}</Фамилия>
-                <Имя>{first_name}</Имя>
-                <Отчество>{patronymic}</Отчество>
-            </ФИО>
-        </ИП>
-    </Налогоплательщик>
-    <Показатели>
-        <Раздел1_1>
-            <ОКТМО>{oktmo}</ОКТМО>
-            <СумАван010>{int(advance_payments[1])}</СумАван010>
-            <СумАван020>{int(advance_payments[2])}</СумАван020>
-            <СумАван040>{int(advance_payments[3])}</СумАван040>
-            <СумАван070>0</СумАван070>
-            <СумНал100>{int(tax_payable)}</СумНал100>
-        </Раздел1_1>
-        <Раздел2_1_1>
-            <СумДоход110>{int(cum_income[1])}</СумДоход110>
-            <СумДоход111>{int(cum_income[2])}</СумДоход111>
-            <СумДоход112>{int(cum_income[3])}</СумДоход112>
-            <СумДоход113>{int(cum_income[4])}</СумДоход113>
-            <НалСтавка120>{tax_rate}</НалСтавка120>
-            <СумИсчисНал130>{int(cum_tax[1])}</СумИсчисНал130>
-            <СумИсчисНал131>{int(cum_tax[2])}</СумИсчисНал131>
-            <СумИсчисНал132>{int(cum_tax[3])}</СумИсчисНал132>
-            <СумИсчисНал133>{int(cum_tax[4])}</СумИсчисНал133>
-            <СумУплНал140>{int(cum_deductible[1])}</СумУплНал140>
-            <СумУплНал141>{int(cum_deductible[2])}</СумУплНал141>
-            <СумУплНал142>{int(cum_deductible[3])}</СумУплНал142>
-            <СумУплНал143>{int(cum_deductible[4])}</СумУплНал143>
-        </Раздел2_1_1>
-    </Показатели>
-</Файл>'''
+        xml_content = generate_xml(inn, fio, oktmo, advance_payments, cum_income, cum_tax, cum_deductible, tax_payable, tax_rate)
+        # Имя файла в формате, понятном ФНС
+        xml_filename = f"NO_USN_{inn}_{datetime.now().strftime('%Y%m%d')}.xml"
+        decl_xml = os.path.join(output_dir, xml_filename)
         with open(decl_xml, 'w', encoding='utf-8') as f:
-            f.write(xml)
+            f.write(xml_content)
     
     return decl_excel, decl_xml, total_income, tax_payable
